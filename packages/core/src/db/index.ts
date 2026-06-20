@@ -92,6 +92,7 @@ function migrate(d: Database.Database): void {
   // Additive migrations for DBs created by earlier milestones (CREATE TABLE IF NOT EXISTS
   // won't add new columns to an existing table).
   addColumnIfMissing(d, 'escalations', 'decision', 'TEXT');
+  addColumnIfMissing(d, 'jobs', 'paused', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 // ── Web Push subscriptions (M4) ──────────────────────────────────────────────
@@ -150,6 +151,7 @@ function rowToJob(r: Record<string, unknown>): Job {
     branch: r.branch as string,
     worktreePath: (r.worktreePath as string) ?? null,
     state: r.state as JobState,
+    paused: !!(r.paused as number),
     profile: r.profile as PolicyProfile,
     sessionId: (r.sessionId as string) ?? null,
     lastActivity: r.lastActivity as string,
@@ -189,6 +191,7 @@ export function createJob(p: CreateJobParams): Job {
     branch: p.branch ?? `foreman/${id.toLowerCase()}`,
     worktreePath: null,
     state: 'created',
+    paused: false,
     profile: p.profile ?? 'standard',
     sessionId: null,
     lastActivity: 'Created',
@@ -206,16 +209,17 @@ export function createJob(p: CreateJobParams): Job {
     updatedAt: ts,
   };
   d.prepare(
-    `INSERT INTO jobs (id, seq, name, brief, repoPath, branch, worktreePath, state, profile,
+    `INSERT INTO jobs (id, seq, name, brief, repoPath, branch, worktreePath, state, paused, profile,
       sessionId, lastActivity, filesTouched, turns, maxTurns, tokens, costUsd, openQuestions,
       directorModel, routerModel, requirePlanApproval, agentTeams, createdAt, updatedAt)
-     VALUES (@id, @seq, @name, @brief, @repoPath, @branch, @worktreePath, @state, @profile,
+     VALUES (@id, @seq, @name, @brief, @repoPath, @branch, @worktreePath, @state, @paused, @profile,
       @sessionId, @lastActivity, @filesTouched, @turns, @maxTurns, @tokens, @costUsd,
       @openQuestions, @directorModel, @routerModel, @requirePlanApproval, @agentTeams,
       @createdAt, @updatedAt)`,
   ).run({
     ...job,
     seq,
+    paused: job.paused ? 1 : 0,
     requirePlanApproval: p.requirePlanApproval ? 1 : 0,
     agentTeams: p.agentTeams ? 1 : 0,
   });
@@ -256,13 +260,13 @@ export function updateJob(id: string, patch: Partial<Job>): Job {
   getDb()
     .prepare(
       `UPDATE jobs SET name=@name, brief=@brief, repoPath=@repoPath, branch=@branch,
-        worktreePath=@worktreePath, state=@state, profile=@profile, sessionId=@sessionId,
+        worktreePath=@worktreePath, state=@state, paused=@paused, profile=@profile, sessionId=@sessionId,
         lastActivity=@lastActivity, filesTouched=@filesTouched, turns=@turns, maxTurns=@maxTurns,
         tokens=@tokens, costUsd=@costUsd, openQuestions=@openQuestions, directorModel=@directorModel,
         routerModel=@routerModel, updatedAt=@updatedAt
        WHERE id=@id`,
     )
-    .run(next);
+    .run({ ...next, paused: next.paused ? 1 : 0 });
   fs.writeFileSync(path.join(jobDir(id), 'job.yaml'), jobYaml(next));
   bus.emitJob(next);
   return next;

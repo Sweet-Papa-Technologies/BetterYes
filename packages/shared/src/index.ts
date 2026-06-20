@@ -49,6 +49,8 @@ export interface Job {
   branch: string;
   worktreePath: string | null;
   state: JobState;
+  /** Paused by the operator (the loop holds at the next turn boundary). */
+  paused: boolean;
   profile: PolicyProfile;
   /** Claude Code session id, used for `--resume`. Null until the first turn. */
   sessionId: string | null;
@@ -149,5 +151,7 @@ export interface PublicConfig {
   coder: { command: string; maxTurns: number };
   dashboard: { bind: string; port: number };
   hermes: { enabled: boolean };
+  /** How long a job holds for a human answer before falling back (ms). */
+  escalationTimeoutMs: number;
   version: string;
 }

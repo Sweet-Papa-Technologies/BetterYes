@@ -511,8 +511,7 @@ class JobManager {
     const c = this.controllers.get(jobId);
     if (!c) return false;
     c.paused = true;
-    const j = getJob(jobId);
-    if (j) updateJob(jobId, { lastActivity: 'Paused' });
+    updateJob(jobId, { paused: true, lastActivity: 'Paused' });
     return true;
   }
 
@@ -520,6 +519,7 @@ class JobManager {
     const c = this.controllers.get(jobId);
     if (!c) return false;
     c.paused = false;
+    updateJob(jobId, { paused: false, lastActivity: 'Resumed' });
     return true;
   }
 

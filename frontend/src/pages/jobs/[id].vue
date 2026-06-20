@@ -19,7 +19,8 @@ const job = computed(() => store.job(id.value));
 const events = computed(() => store.detailEvents);
 const tab = ref<'log' | 'plan' | 'files' | 'audit'>('log');
 const redirectText = ref('');
-const paused = ref(false);
+// Derive from the job (kept live over WS), not local state — so it can't desync.
+const paused = computed(() => job.value?.paused ?? false);
 
 const planText = computed(() => {
   const p = [...events.value].reverse().find((e) => e.type === 'plan' || e.type === 'director');
@@ -49,13 +50,9 @@ async function doRedirect() {
   notify('Redirect sent — applies at the next turn boundary');
 }
 async function pauseResume() {
-  if (paused.value) {
-    await api.resume(id.value);
-    paused.value = false;
-  } else {
-    await api.pause(id.value);
-    paused.value = true;
-  }
+  // The WS job update flips `job.paused`; the button follows it.
+  if (paused.value) await api.resume(id.value);
+  else await api.pause(id.value);
 }
 async function kill() {
   await api.kill(id.value);

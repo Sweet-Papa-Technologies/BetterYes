@@ -73,6 +73,7 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     coder: { command: config.coder.command, maxTurns: config.coder.max_turns },
     dashboard: { bind: config.dashboard.bind, port: config.dashboard.port },
     hermes: { enabled: config.hermes.enabled },
+    escalationTimeoutMs: config.loop.escalation_timeout_ms,
     version: VERSION,
   }));
 

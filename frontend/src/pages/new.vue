@@ -16,6 +16,9 @@ const profile = ref<PolicyProfile>('standard');
 const requirePlanApproval = ref(false);
 const agentTeams = ref(false);
 const launching = ref(false);
+const showAdvanced = ref(false);
+const directorModel = ref('');
+const routerModel = ref('');
 
 async function launch() {
   if (!brief.value.trim() || !repoPath.value.trim()) {
@@ -31,6 +34,8 @@ async function launch() {
       profile: profile.value,
       requirePlanApproval: requirePlanApproval.value,
       agentTeams: agentTeams.value,
+      ...(directorModel.value.trim() ? { directorModel: directorModel.value.trim() } : {}),
+      ...(routerModel.value.trim() ? { routerModel: routerModel.value.trim() } : {}),
     });
     await router.push(`/jobs/${job.id}`);
   } catch (e) {
@@ -81,7 +86,24 @@ async function launch() {
       <q-toggle v-model="requirePlanApproval" label="Require my approval of the plan before starting" color="primary" />
       <q-toggle v-model="agentTeams" label="Enable parallel sub-agents (Agent Teams)" color="primary" />
 
-      <q-btn unelevated no-caps :loading="launching" class="launch" @click="launch">
+      <!-- Advanced: model overrides (defaults come from foreman.yaml) -->
+      <div class="advanced">
+        <button class="adv-toggle mono" @click="showAdvanced = !showAdvanced">
+          {{ showAdvanced ? '▾' : '▸' }} Advanced: model overrides
+        </button>
+        <div v-if="showAdvanced" class="column q-gutter-sm q-mt-sm">
+          <div>
+            <label class="lbl mono">DIRECTOR MODEL <span class="text-muted">(optional)</span></label>
+            <q-input v-model="directorModel" dense borderless class="fld mono" placeholder="director (default)" />
+          </div>
+          <div>
+            <label class="lbl mono">ROUTER MODEL <span class="text-muted">(optional)</span></label>
+            <q-input v-model="routerModel" dense borderless class="fld mono" placeholder="router (default)" />
+          </div>
+        </div>
+      </div>
+
+      <q-btn unelevated no-caps :loading="launching" class="launch" @click="launch" aria-label="Launch job">
         <Rocket :size="16" class="q-mr-sm" /> Launch job
       </q-btn>
     </div>
@@ -98,4 +120,5 @@ async function launch() {
 .seg-btn:last-child { border-right: none; }
 .seg-btn.on { background: var(--fg-accent); color: #0e0f11; font-weight: 600; }
 .launch { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; padding: 10px; font-size: 15px; }
+.adv-toggle { background: none; border: none; color: var(--fg-text-2); cursor: pointer; font-size: 12px; padding: 0; }
 </style>

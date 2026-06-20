@@ -15,6 +15,7 @@ const store = useJobsStore();
 const s = computed(() => store.summary);
 const jobs = computed(() => store.list);
 const newJob = () => router.push('/new');
+const retry = () => store.loadAndSubscribe();
 </script>
 
 <template>
@@ -22,7 +23,10 @@ const newJob = () => router.push('/new');
     <!-- Top bar -->
     <div class="topbar row items-center justify-between q-px-md q-py-sm">
       <div class="row items-center q-gutter-md">
-        <span v-if="!$q.screen.gt.sm" class="brand">FOREMAN</span>
+        <span v-if="!$q.screen.gt.sm" class="brand row items-center q-gutter-xs">
+          FOREMAN
+          <span class="conn" :class="store.live ? 'live' : 'down'" :title="store.live ? 'live' : 'reconnecting…'" />
+        </span>
         <span class="mono summary">
           <span class="text-running">{{ s.running }} running</span>
           <span class="text-muted"> · </span>
@@ -37,6 +41,18 @@ const newJob = () => router.push('/new');
     </div>
 
     <div class="q-pa-md">
+      <!-- Daemon-down / unauthorized banner (distinct from the empty state) -->
+      <div v-if="store.loadError" class="needs-you-band q-pa-md q-mb-md row items-center justify-between">
+        <span>
+          {{ store.loadError === 'unauthorized'
+            ? 'Unauthorized — set your dashboard token in Settings.'
+            : 'Can\'t reach the FOREMAN daemon. Is it running?' }}
+        </span>
+        <q-btn flat dense no-caps :to="store.loadError === 'unauthorized' ? '/settings' : undefined" @click="retry">
+          {{ store.loadError === 'unauthorized' ? 'Settings' : 'Retry' }}
+        </q-btn>
+      </div>
+
       <NeedsYouBand :jobs="store.needsYouJobs" class="q-mb-md" />
 
       <!-- Loading skeletons (brief §5) -->
@@ -52,7 +68,7 @@ const newJob = () => router.push('/new');
       </div>
 
       <!-- Empty state -->
-      <div v-else-if="store.loaded && !jobs.length" class="empty column flex-center q-pa-xl text-center">
+      <div v-else-if="store.loaded && !store.loadError && !jobs.length" class="empty column flex-center q-pa-xl text-center">
         <div class="empty-grid q-mb-md" />
         <div class="text-h6 text-weight-600">No jobs yet</div>
         <div class="text-2 q-mt-xs">Launch your first one to start supervising.</div>
@@ -84,6 +100,9 @@ const newJob = () => router.push('/new');
 <style scoped>
 .topbar { border-bottom: 1px solid var(--fg-border); background: var(--fg-surface); position: sticky; top: 0; z-index: 5; }
 .brand { font-family: 'JetBrains Mono', monospace; font-weight: 600; letter-spacing: 0.06em; color: var(--fg-accent); }
+.conn { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; }
+.conn.live { background: var(--fg-running); box-shadow: 0 0 6px var(--fg-running); }
+.conn.down { background: var(--fg-muted); }
 .summary { font-size: 13px; }
 .text-running { color: var(--fg-running); }
 .text-accent { color: var(--fg-accent); }

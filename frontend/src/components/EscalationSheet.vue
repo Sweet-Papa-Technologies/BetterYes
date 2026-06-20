@@ -4,6 +4,7 @@ import { useQuasar } from 'quasar';
 import { TriangleAlert, Check, X, CornerDownLeft } from 'lucide-vue-next';
 import type { Escalation } from '@foreman/shared';
 import { useJobsStore } from '../stores/jobs';
+import { api } from '../lib/api';
 
 // S3 — "the single most important moment in the whole app." A job stopped to ask the human.
 // Mobile: bottom sheet over a dimmed board. Desktop: centered modal. Two-tap to resolve.
@@ -16,16 +17,22 @@ const answer = ref('');
 const busy = ref(false);
 
 const job = computed(() => store.job(props.escalation.jobId));
-const HOLD_MS = 30 * 60 * 1000;
+// The real per-profile hold window comes from the daemon (falls back to 30 min).
+const holdMs = ref(30 * 60 * 1000);
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval> | null = null;
-onMounted(() => {
+onMounted(async () => {
   timer = setInterval(() => (now.value = Date.now()), 1000);
+  try {
+    holdMs.value = (await api.config()).escalationTimeoutMs;
+  } catch {
+    /* keep the default */
+  }
 });
 onUnmounted(() => timer && clearInterval(timer));
 
 const remaining = computed(() => {
-  const ms = Math.max(0, new Date(props.escalation.createdAt).getTime() + HOLD_MS - now.value);
+  const ms = Math.max(0, new Date(props.escalation.createdAt).getTime() + holdMs.value - now.value);
   const m = Math.floor(ms / 60000);
   const s = Math.floor((ms % 60000) / 1000);
   return `${m}:${String(s).padStart(2, '0')}`;

@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia';
 import type { Escalation, Job, JobEvent } from '@foreman/shared';
-import { api, connectWs } from '../lib/api';
+import { api, connectWs, ApiError } from '../lib/api';
 import { isActive, needsYou } from '../lib/status';
 
 interface JobsState {
   jobs: Record<string, Job>;
   live: boolean;
   loaded: boolean;
+  /** Set when the initial load fails (unauthorized / daemon down). */
+  loadError: 'unauthorized' | 'unreachable' | null;
   boardDisconnect: (() => void) | null;
   // open escalations awaiting a human
   escalations: Escalation[];
@@ -21,6 +23,7 @@ export const useJobsStore = defineStore('jobs', {
     jobs: {},
     live: false,
     loaded: false,
+    loadError: null,
     boardDisconnect: null,
     escalations: [],
     detailId: null,
@@ -57,7 +60,15 @@ export const useJobsStore = defineStore('jobs', {
 
   actions: {
     async loadAndSubscribe() {
-      const jobs = await api.listJobs();
+      let jobs;
+      try {
+        jobs = await api.listJobs();
+      } catch (e) {
+        this.loadError = e instanceof ApiError && e.status === 401 ? 'unauthorized' : 'unreachable';
+        this.loaded = true; // resolved (to an error) — stop showing skeletons
+        return;
+      }
+      this.loadError = null;
       this.jobs = Object.fromEntries(jobs.map((j) => [j.id, j]));
       this.loaded = true;
       await this.refreshEscalations();

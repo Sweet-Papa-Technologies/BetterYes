@@ -5,8 +5,10 @@ import type { PublicConfig } from '@foreman/shared';
 import { api } from '../lib/api';
 import { getToken, setToken } from '../lib/api';
 import { enablePush, pushSupported } from '../lib/push';
+import { useJobsStore } from '../stores/jobs';
 
 const $q = useQuasar();
+const store = useJobsStore();
 const token = ref(getToken());
 const config = ref<PublicConfig | null>(null);
 const error = ref('');
@@ -23,6 +25,7 @@ function saveToken() {
   setToken(token.value);
   $q.notify({ message: 'Token saved', color: 'positive', position: 'top' });
   void load();
+  void store.loadAndSubscribe(); // recover the board after fixing the token
 }
 
 const pushBusy = ref(false);
