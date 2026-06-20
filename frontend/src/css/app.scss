@@ -1,0 +1,148 @@
+// FOREMAN global styles — tokens, fonts, and the mission-control component vocabulary.
+
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+:root {
+  // Surface hierarchy
+  --fg-bg: #0e0f11;
+  --fg-surface: #17191c;
+  --fg-surface-elevated: #202327;
+  --fg-border: #2a2e33;
+  // Text
+  --fg-text: #e8eaed;
+  --fg-text-2: #9aa0a6;
+  --fg-muted: #6e7681;
+  // Accent + status
+  --fg-accent: #ffb020;
+  --fg-running: #3fb950;
+  --fg-planning: #539bf5;
+  --fg-blocked: #ffb020;
+  --fg-review: #a371f7;
+  --fg-done: #2ea043;
+  --fg-failed: #f85149;
+  --fg-killed: #6e7681;
+}
+
+body {
+  background: var(--fg-bg);
+  color: var(--fg-text);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-feature-settings: 'liga' 0;
+}
+
+.text-2 { color: var(--fg-text-2); }
+.text-muted { color: var(--fg-muted); }
+.hairline { border: 1px solid var(--fg-border); }
+
+// ── Status pill (STITCH_BRIEF: "status pill") ────────────────────────────────
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  .pip {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: currentColor;
+  }
+}
+@mixin status($color) {
+  color: $color;
+  background: rgba($color, 0.1);
+  border-color: rgba($color, 0.4);
+}
+.status-running    { @include status(#3fb950); }
+.status-planning   { @include status(#539bf5); }
+.status-blocked    { @include status(#ffb020); }
+.status-review     { @include status(#a371f7); }
+.status-done       { @include status(#2ea043); }
+.status-failed     { @include status(#f85149); }
+.status-killed     { @include status(#6e7681); }
+.status-created    { @include status(#6e7681); }
+
+// Pulse on the live/attention states.
+.pip-pulse { animation: fg-pulse 1.6s ease-in-out infinite; }
+.pip-pulse-fast { animation: fg-pulse 0.9s ease-in-out infinite; }
+@keyframes fg-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  50% { opacity: 0.5; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0); }
+}
+
+// ── Code chip (repo/branch, paths) ───────────────────────────────────────────
+.code-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  background: var(--fg-surface-elevated);
+  border: 1px solid var(--fg-border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--fg-text-2);
+}
+
+// ── Burn meter ───────────────────────────────────────────────────────────────
+.burn-meter {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--fg-border);
+  overflow: hidden;
+  .fill { height: 100%; border-radius: 9999px; }
+}
+
+// ── Surfaces ─────────────────────────────────────────────────────────────────
+.panel {
+  background: var(--fg-surface);
+  border: 1px solid var(--fg-border);
+  border-radius: 6px;
+}
+.panel-elevated { background: var(--fg-surface-elevated); }
+
+// ── Log console (STITCH_BRIEF: "log console") ────────────────────────────────
+.log-console {
+  background: var(--fg-bg);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  .log-ts { color: var(--fg-muted); }
+  .log-line { padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+  .lv-init { color: #539bf5; }
+  .lv-sync { color: #3fb950; }
+  .lv-read { color: #9aa0a6; }
+  .lv-plan { color: #a371f7; }
+  .lv-exec { color: #ffb020; }
+  .lv-warn { color: #ffb020; }
+  .lv-error { color: #f85149; }
+  .lv-info { color: var(--fg-text); }
+}
+
+// ── Needs-you band (the attention surface) ───────────────────────────────────
+.needs-you-band {
+  background: rgba(255, 176, 32, 0.1);
+  border: 1px solid rgba(255, 176, 32, 0.4);
+  border-radius: 4px;
+  color: var(--fg-accent);
+}
+
+// Quasar surface overrides
+.q-drawer { background: var(--fg-surface) !important; }
+.body--dark { --q-dark: #17191c; --q-dark-page: #0e0f11; }

@@ -1,0 +1,36 @@
+{
+  "name": "@foreman/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FOREMAN core daemon — supervision loop, SQLite store, and REST/WS API.",
+  "bin": {
+    "foreman": "bin/foreman.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch bin/foreman.ts serve",
+    "start": "tsx bin/foreman.ts serve",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/static": "^8.0.4",
+    "@fastify/websocket": "^11.0.2",
+    "@foreman/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^11.8.1",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "openai": "^4.83.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.19.11",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.0"
+  }
+}

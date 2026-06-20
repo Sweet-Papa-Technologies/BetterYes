@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.DS_Store
+
+# secrets / local config
+.env
+.env.*
+!.env.example
+litellm.config.yaml
+
+# FOREMAN runtime state lives in ~/.foreman (outside repo), but ignore any local copy
+.foreman/
+
+# logs
+*.log
+npm-debug.log*
+
+# editor
+.idea/
+*.tsbuildinfo

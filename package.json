@@ -1,0 +1,25 @@
+{
+  "name": "foreman",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FOREMAN — mission control for supervising autonomous Claude Code coding jobs",
+  "type": "module",
+  "license": "MIT",
+  "author": "FoFo",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "foreman": "pnpm --filter @foreman/core exec tsx bin/foreman.ts",
+    "serve": "pnpm --filter @foreman/core exec tsx bin/foreman.ts serve",
+    "init": "pnpm --filter @foreman/core exec tsx bin/foreman.ts init",
+    "doctor": "pnpm --filter @foreman/core exec tsx bin/foreman.ts doctor",
+    "dev:core": "pnpm --filter @foreman/core dev",
+    "dev:ui": "pnpm --filter betteryes dev",
+    "build": "pnpm --filter @foreman/core build && pnpm --filter betteryes build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.0"
+  }
+}

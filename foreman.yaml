@@ -1,0 +1,40 @@
+# FOREMAN configuration (DESIGN §7). Secrets live in the Keychain or .env — this file holds
+# only the *name* of the env var for each secret, never the value.
+
+endpoint:
+  # Your LiteLLM proxy (OpenAI-compatible). `foreman init` writes litellm.config.yaml and
+  # prints the command to start it: `litellm --config litellm.config.yaml`.
+  base_url: "http://localhost:4000"
+  api_key_env: "LITELLM_KEY"
+
+models:
+  # These names map to the model_name entries in litellm.config.yaml. Swap freely (FR7) —
+  # the defaults route to gemini-3.5-flash (Director) and gemini-3.1-flash-lite (Router).
+  director: "director"
+  router: "router"
+  # judge: "judge"   # optional per-call AI judge, off by default
+
+coder:
+  command: "claude" # BYO Claude Code on PATH
+  max_turns: 50
+  auth: "oauth" # 'oauth' (dev) or 'api_key' (unattended; reads ANTHROPIC_API_KEY)
+  # acceptEdits (default) auto-applies file edits in the isolated worktree. Switch to
+  # bypassPermissions once the M2 PreToolUse rule gate is in place.
+  permission_mode: "acceptEdits"
+
+concurrency:
+  max_parallel_jobs: 4 # enforced in M2; M1 runs one job at a time
+
+loop:
+  max_iterations: 40 # hard cap on supervision turns per job
+  circuit_breaker_repeats: 3 # stop after this many identical consecutive failures
+
+hermes:
+  enabled: false # M4 — the conversational brain behind the chat panel
+  base_url: "http://localhost:8765"
+  api_key_env: "HERMES_API_KEY"
+
+dashboard:
+  bind: "127.0.0.1" # loopback by default; set to your Tailscale/LAN IP for phone access
+  port: 7777
+  auth_token_env: "FOREMAN_TOKEN"

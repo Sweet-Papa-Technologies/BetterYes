@@ -1,0 +1,26 @@
+# FOREMAN granular tool rules (DESIGN §4). Shipped now; ENFORCED by the PreToolUse gate in
+# M2. First match wins. Actions: allow | deny | escalate. Unmatched → default_action.
+#
+# Security invariant: no path defaults to allow when the gate errors — see on_error.
+
+default_action: allow # for unmatched calls (profile-overridable)
+on_error: escalate # fail-safe: never default-allow on error
+
+rules:
+  # Protect secrets and credentials anywhere.
+  - match: { tool: "*", path_glob: ["~/.ssh/**", "**/.env", "**/secrets/**", "**/*.pem"] }
+    action: deny
+
+  # Keep writes inside the job's worktree.
+  - match: { tool: "Edit|Write", path_outside_worktree: true }
+    action: deny
+
+  # Block irreversible / dangerous shell.
+  - match:
+      tool: "Bash"
+      cmd_regex: "(rm -rf\\s+/|git push --force|git push -f|curl[^|]*\\|\\s*(ba)?sh|npm publish|pnpm publish)"
+    action: deny
+
+  # Ask a human before infra/privileged commands.
+  - match: { tool: "Bash", cmd_regex: "\\b(docker|systemctl|gcloud|kubectl|terraform)\\b" }
+    action: escalate

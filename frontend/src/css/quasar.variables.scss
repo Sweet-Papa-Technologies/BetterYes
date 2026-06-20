@@ -1,0 +1,17 @@
+// FOREMAN design system — "developer mission control" (STITCH_BRIEF §2 / Stitch design MD).
+// Dark, calm, precise. Hazard-amber reserved for "needs you". Hairlines over shadows.
+
+$primary   : #ffb020; // hazard amber — primary actions, brand, live pulse
+$secondary : #539bf5; // planning blue
+$accent    : #a371f7; // review purple
+
+$dark-page : #0e0f11; // app background (near-black)
+$dark      : #17191c; // surface (cards, panels, rows)
+
+$positive  : #3fb950; // running
+$negative  : #f85149; // failed
+$info      : #539bf5; // planning
+$warning   : #ffb020; // escalation / needs-you
+
+// Typography
+$typography-font-family : 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

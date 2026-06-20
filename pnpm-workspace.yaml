@@ -1,0 +1,15 @@
+# https://pnpm.io/workspaces
+packages:
+  - 'packages/*'
+  - 'frontend'
+
+# https://pnpm.io/settings — allow native/build steps for these deps
+allowBuilds:
+  '@parcel/watcher': true
+  better-sqlite3: true
+  core-js: true
+  electron-winstaller: true
+  esbuild: true
+  lightningcss: true
+  rolldown: true
+  unrs-resolver: true

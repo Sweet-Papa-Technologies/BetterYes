@@ -1,0 +1,136 @@
+# FOREMAN
+
+**Mission control for supervising autonomous AI coding agents.**
+
+You launch coding *jobs* ("rebuild my Moods app per this brief"). Each runs as a headless
+Claude Code session in its own git worktree, and FOREMAN runs a **Director → Router → Coder**
+supervision loop over it — so you steer everything from one dashboard (or your phone) and are
+only pulled in when a real decision is needed, instead of babysitting four terminals of "Yes"
+prompts.
+
+> Clean-room personal reimplementation of the EED Buddy supervision pattern. See `PRD.md` and
+> `DESIGN.md` for the full product/architecture spec, and `STITCH_BRIEF.md` for the UI design.
+
+## Status — Foundation + M1
+
+This repo currently implements the **foundation + M1** slice (of the M1–M5 roadmap in `PRD.md`):
+
+- ✅ pnpm monorepo: `packages/core` (daemon), `packages/shared` (types), `frontend` (dashboard PWA)
+- ✅ Secrets management — macOS **Keychain** primary, `.env` / env-var fallback
+- ✅ Gemini key provisioning via `gcloud` + a generated **LiteLLM** proxy config
+- ✅ The supervision loop — Director (plan/review), Router (7-label classifier), Coder
+  (headless `claude` in a worktree), amnesia ledger + circuit breaker — running one job
+  end-to-end on SQLite
+- ✅ Fastify REST + WebSocket API (bearer auth, loopback bind)
+- ✅ Dashboard: the **Overview / Job Board** and **Job Detail** screens (from the Stitch
+  design), wired to live data over WebSocket, desktop + mobile
+
+**Later milestones (not yet built):** M2 concurrency + the PreToolUse rule gate + audit;
+M3 the remaining screens (Escalation, Rules editor, Chat, full Settings) + full PWA push;
+M4 Hermes bridge + Web Push + real `defer`-based human-in-the-loop; M5 Docker packaging.
+Today, `request_human_approval` is an auto-resolving stub and escalations auto-resolve via
+the Director (see `packages/core/src/mcp-server` and the orchestrator).
+
+## Requirements
+
+- Node ≥ 22.12, `pnpm`
+- [Claude Code](https://claude.com/claude-code) (`claude`) on PATH, authenticated
+- A LiteLLM proxy and a Gemini API key — `foreman init` sets both up for you
+- macOS for Keychain storage (other platforms use `.env` — fully supported)
+- `gcloud` CLI (only if you want `foreman init` to mint the Gemini key for you)
+
+## Quickstart (~10 min)
+
+```bash
+pnpm install
+
+# 1) Provision: mints a Gemini API key in your GCP project, stores secrets in the Keychain
+#    (FOREMAN_TOKEN, LITELLM_KEY, GEMINI_API_KEY), and writes litellm.config.yaml.
+pnpm foreman init --project <your-gcp-project>
+
+# 2) Start the LiteLLM proxy (reads GEMINI_API_KEY + LITELLM_KEY from your env/Keychain)
+export GEMINI_API_KEY="$(security find-generic-password -s foreman -a GEMINI_API_KEY -w)"
+export LITELLM_KEY="$(security find-generic-password -s foreman -a LITELLM_KEY -w)"
+litellm --config litellm.config.yaml --port 4000 &
+
+# 3) Sanity check
+pnpm foreman doctor
+
+# 4) Build the dashboard and run the daemon (serves the dashboard at the bind address)
+pnpm build
+pnpm foreman serve        # http://127.0.0.1:7777
+```
+
+Open `http://127.0.0.1:7777`, go to **Settings**, paste your token
+(`foreman secret get FOREMAN_TOKEN` shows it's set; read the value with
+`security find-generic-password -s foreman -a FOREMAN_TOKEN -w`), then launch a job.
+
+### Dev mode (hot reload)
+
+```bash
+pnpm dev:core    # daemon on :7777 with watch
+pnpm dev:ui      # Quasar dev server on :9000, proxying the API (CORS is enabled)
+```
+
+### Launch a job from the terminal
+
+```bash
+pnpm foreman job run --repo /path/to/a/git/repo \
+  --brief "Create a file named hello.txt containing a friendly greeting."
+```
+
+## Secrets — Keychain or `.env`
+
+Resolution precedence (no silent insecure fallback):
+
+1. `process.env[NAME]`
+2. `.env` at the repo root
+3. macOS Keychain (`security`, service `foreman`)
+
+```bash
+pnpm foreman secret set FOREMAN_TOKEN   # stores in Keychain (macOS)
+pnpm foreman secret list                # which secrets resolve, and from where
+```
+
+On non-macOS, copy `.env.example` → `.env` and fill it in (`foreman init` prints the values).
+
+## Configuration
+
+- `foreman.yaml` — models, endpoint, coder command, concurrency, loop caps, dashboard bind/port.
+  **Models are config, not code** — swap the Director/Router models freely (defaults:
+  `gemini-3.5-flash` / `gemini-3.1-flash-lite`, mapped through LiteLLM).
+- `rules.yaml` — the default tool rule set (enforced by the PreToolUse gate in **M2**).
+- `.env.example` — every secret name.
+- Runtime state lives in `~/.foreman/` (SQLite `foreman.db`, per-job dirs, worktrees).
+
+## Layout
+
+```
+packages/core      the daemon: secrets, config, db, models, director, router, coder,
+                   ledger, mcp-server, orchestrator, api  +  bin/foreman.ts (CLI)
+packages/shared    types shared between the daemon and the dashboard
+frontend           Quasar (Vue 3) dashboard PWA — the Stitch "mission control" design
+```
+
+## CLI
+
+```
+foreman init [--project <id>]   provision Gemini key + secrets + litellm.config.yaml
+foreman doctor                  health-check secrets, models, claude, and the DB
+foreman serve                   run the daemon + dashboard
+foreman secret set|get|list|delete
+foreman job run|list            launch/inspect jobs from the terminal
+foreman mcp-server              run the MCP bridge (ask_director / request_human_approval) over stdio
+```
+
+## Security notes
+
+- The dashboard requires a bearer token and binds to loopback by default. For phone access,
+  bind to a Tailscale/LAN IP — never expose it publicly.
+- Secrets are never logged; the logger and audit paths redact secret-pattern values.
+- Each job is isolated in its own git worktree.
+- The rule-gate fail-safe (`on_error: escalate`, never default-allow) is enforced in M2.
+
+## License
+
+MIT — see `LICENSE`.
