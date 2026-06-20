@@ -103,8 +103,8 @@ function hhmmss(ts: string) {
       <div class="row q-gutter-lg q-mt-sm burns">
         <BurnMeter label="TURNS" :value="job.turns" :max="job.maxTurns" />
         <BurnMeter label="CODER TOKENS" :value="job.tokens" :max="Math.max(job.tokens, 100000)" color="var(--fg-planning)" />
-        <div class="cost mono text-muted" title="Claude Code (Coder) spend, from Claude's own reported cost. Gemini Director/Router supervision is billed separately and is comparatively negligible.">
-          ${{ job.costUsd.toFixed(2) }} <span class="cost-tag">coder</span>
+        <div class="cost mono text-muted" title="Estimated API-equivalent cost of the Coder (Claude Code), computed from token usage. On a Claude subscription (the default, coder.auth: oauth) you are NOT billed this — it counts against your plan's rate limits. It becomes real spend only with coder.auth: api_key / Vertex. Gemini supervision is separate and negligible.">
+          ~${{ job.costUsd.toFixed(2) }} <span class="cost-tag">coder est.</span>
         </div>
       </div>
     </div>
