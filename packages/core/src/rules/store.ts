@@ -72,3 +72,14 @@ export function writeRules(config: ForemanConfig, text: string): WriteResult {
   fs.writeFileSync(resolveRulesPath(config), text);
   return { ok: true };
 }
+
+/** Write from a structured ruleset (the dashboard editor sends JSON; we serialize to YAML). */
+export function writeRulesParsed(config: ForemanConfig, parsed: unknown): WriteResult {
+  const result = RulesFileSchema.safeParse(parsed);
+  if (!result.success) {
+    return { ok: false, error: result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') };
+  }
+  const header =
+    '# FOREMAN tool rules (DESIGN §4). First match wins. Edited via the dashboard Rules editor.\n';
+  return writeRules(config, header + YAML.stringify(result.data));
+}

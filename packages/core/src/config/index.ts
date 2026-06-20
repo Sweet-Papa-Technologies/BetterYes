@@ -37,6 +37,8 @@ const ConfigSchema = z.object({
   loop: z.object({
     max_iterations: z.number().int().positive().default(40),
     circuit_breaker_repeats: z.number().int().positive().default(3),
+    // How long a job holds for a human answer before falling back (PRD FR4, default 30 min).
+    escalation_timeout_ms: z.number().int().positive().default(30 * 60 * 1000),
   }),
   rules: z
     .object({

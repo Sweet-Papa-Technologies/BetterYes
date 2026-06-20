@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { LayoutGrid, MessageSquare, ShieldCheck, Settings as SettingsIcon } from 'lucide-vue-next';
 import { useJobsStore } from '../stores/jobs';
+import EscalationSheet from './EscalationSheet.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -88,6 +89,13 @@ const go = (to: string) => router.push(to);
         </q-tab>
       </q-tabs>
     </q-footer>
+
+    <!-- The escalation surface overlays everything when a job needs a human (S3). -->
+    <EscalationSheet
+      v-if="store.topEscalation"
+      :key="store.topEscalation.id"
+      :escalation="store.topEscalation"
+    />
   </q-layout>
 </template>
 

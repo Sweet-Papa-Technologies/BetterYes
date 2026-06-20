@@ -72,11 +72,28 @@ function migrate(d: Database.Database): void {
       proposedAction TEXT,
       reason         TEXT,
       state          TEXT NOT NULL DEFAULT 'open',
+      decision       TEXT,
       answer         TEXT,
       createdAt      TEXT NOT NULL,
       resolvedAt     TEXT
     );
   `);
+
+  // Additive migrations for DBs created by earlier milestones (CREATE TABLE IF NOT EXISTS
+  // won't add new columns to an existing table).
+  addColumnIfMissing(d, 'escalations', 'decision', 'TEXT');
+}
+
+function addColumnIfMissing(
+  d: Database.Database,
+  table: string,
+  column: string,
+  type: string,
+): void {
+  const cols = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 /** Open the DB and run migrations — used by `foreman doctor` to confirm writability. */
@@ -106,6 +123,8 @@ function rowToJob(r: Record<string, unknown>): Job {
     openQuestions: r.openQuestions as number,
     directorModel: r.directorModel as string,
     routerModel: r.routerModel as string,
+    requirePlanApproval: !!(r.requirePlanApproval as number),
+    agentTeams: !!(r.agentTeams as number),
     createdAt: r.createdAt as string,
     updatedAt: r.updatedAt as string,
   };
@@ -143,6 +162,8 @@ export function createJob(p: CreateJobParams): Job {
     openQuestions: 0,
     directorModel: p.directorModel,
     routerModel: p.routerModel,
+    requirePlanApproval: !!p.requirePlanApproval,
+    agentTeams: !!p.agentTeams,
     createdAt: ts,
     updatedAt: ts,
   };
@@ -270,18 +291,68 @@ export function createEscalation(p: CreateEscalationParams): Escalation {
   ).run(id, p.jobId, p.question, p.proposedAction ?? null, p.reason ?? null, ts);
   const job = getJob(p.jobId);
   if (job) updateJob(p.jobId, { openQuestions: job.openQuestions + 1 });
-  const esc: Escalation = {
+  return rowToEscalation({
     id,
     jobId: p.jobId,
     question: p.question,
     proposedAction: p.proposedAction ?? null,
     reason: p.reason ?? null,
     state: 'open',
+    decision: null,
     answer: null,
     createdAt: ts,
     resolvedAt: null,
+  });
+}
+
+function rowToEscalation(r: Record<string, unknown>): Escalation {
+  return {
+    id: r.id as string,
+    jobId: r.jobId as string,
+    question: r.question as string,
+    proposedAction: (r.proposedAction as string) ?? null,
+    reason: (r.reason as string) ?? null,
+    state: r.state as Escalation['state'],
+    decision: (r.decision as Escalation['decision']) ?? null,
+    answer: (r.answer as string) ?? null,
+    createdAt: r.createdAt as string,
+    resolvedAt: (r.resolvedAt as string) ?? null,
   };
-  return esc;
+}
+
+export function getEscalation(id: string): Escalation | null {
+  const r = getDb().prepare('SELECT * FROM escalations WHERE id = ?').get(id) as
+    | Record<string, unknown>
+    | undefined;
+  return r ? rowToEscalation(r) : null;
+}
+
+/** Record the operator's answer and close the escalation; decrements the job's open count. */
+export function resolveEscalation(
+  id: string,
+  decision: 'allow' | 'deny',
+  answer?: string,
+): Escalation | null {
+  const cur = getEscalation(id);
+  if (!cur || cur.state !== 'open') return cur;
+  const ts = now();
+  getDb()
+    .prepare(
+      `UPDATE escalations SET state='resolved', decision=?, answer=?, resolvedAt=? WHERE id=?`,
+    )
+    .run(decision, answer ?? null, ts, id);
+  const job = getJob(cur.jobId);
+  if (job) updateJob(cur.jobId, { openQuestions: Math.max(0, job.openQuestions - 1) });
+  return getEscalation(id);
+}
+
+/** Mark an open escalation as timed out (used by the orchestrator's hold timeout). */
+export function timeoutEscalation(id: string): void {
+  const cur = getEscalation(id);
+  if (!cur || cur.state !== 'open') return;
+  getDb().prepare(`UPDATE escalations SET state='timed_out', resolvedAt=? WHERE id=?`).run(now(), id);
+  const job = getJob(cur.jobId);
+  if (job) updateJob(cur.jobId, { openQuestions: Math.max(0, job.openQuestions - 1) });
 }
 
 export function listEscalations(state?: 'open' | 'resolved' | 'timed_out'): Escalation[] {
@@ -290,17 +361,7 @@ export function listEscalations(state?: 'open' | 'resolved' | 'timed_out'): Esca
       ? getDb().prepare('SELECT * FROM escalations WHERE state = ? ORDER BY createdAt DESC').all(state)
       : getDb().prepare('SELECT * FROM escalations ORDER BY createdAt DESC').all()
   ) as Record<string, unknown>[];
-  return rows.map((r) => ({
-    id: r.id as string,
-    jobId: r.jobId as string,
-    question: r.question as string,
-    proposedAction: (r.proposedAction as string) ?? null,
-    reason: (r.reason as string) ?? null,
-    state: r.state as Escalation['state'],
-    answer: (r.answer as string) ?? null,
-    createdAt: r.createdAt as string,
-    resolvedAt: (r.resolvedAt as string) ?? null,
-  }));
+  return rows.map(rowToEscalation);
 }
 
 export function listEvents(jobId: string, limit = 500): JobEvent[] {

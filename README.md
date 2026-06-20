@@ -11,25 +11,29 @@ prompts.
 > Clean-room personal reimplementation of the EED Buddy supervision pattern. See `PRD.md` and
 > `DESIGN.md` for the full product/architecture spec, and `STITCH_BRIEF.md` for the UI design.
 
-## Status — Foundation + M1
+## Status — M1 → M3 complete
 
-This repo currently implements the **foundation + M1** slice (of the M1–M5 roadmap in `PRD.md`):
+This repo implements milestones **M1–M3** of the roadmap in `PRD.md`:
 
 - ✅ pnpm monorepo: `packages/core` (daemon), `packages/shared` (types), `frontend` (dashboard PWA)
 - ✅ Secrets management — macOS **Keychain** primary, `.env` / env-var fallback
 - ✅ Gemini key provisioning via `gcloud` + a generated **LiteLLM** proxy config
-- ✅ The supervision loop — Director (plan/review), Router (7-label classifier), Coder
-  (headless `claude` in a worktree), amnesia ledger + circuit breaker — running one job
-  end-to-end on SQLite
-- ✅ Fastify REST + WebSocket API (bearer auth, loopback bind)
-- ✅ Dashboard: the **Overview / Job Board** and **Job Detail** screens (from the Stitch
-  design), wired to live data over WebSocket, desktop + mobile
+- ✅ **M1** — supervision loop: Director (plan/review), Router (7-label classifier), Coder
+  (headless `claude` in a worktree), amnesia ledger + circuit breaker; SQLite store; Fastify
+  REST + WebSocket API (bearer auth, loopback bind)
+- ✅ **M2** — concurrency (parallel cap + queue) and the **PreToolUse rule gate**: a standalone
+  hook (`bin/foreman-gate.mjs`) that denies/escalates tool calls per `rules.yaml` under
+  `bypassPermissions` ("auto-approve most, veto some"), with an append-only audit log
+- ✅ **M3** — full dashboard: the **Escalation** surface (bottom sheet / modal), an in-place
+  **Rules editor**, **Settings**, and **installable PWA** (manifest + service worker + icons).
+  Real, answerable human-in-the-loop: a job with *Require plan approval* (or a Router
+  `blocked`/`awaiting_approval` verdict) **holds** until you answer Allow/Deny/redirect from
+  the dashboard, then resumes.
 
-**Later milestones (not yet built):** M2 concurrency + the PreToolUse rule gate + audit;
-M3 the remaining screens (Escalation, Rules editor, Chat, full Settings) + full PWA push;
-M4 Hermes bridge + Web Push + real `defer`-based human-in-the-loop; M5 Docker packaging.
-Today, `request_human_approval` is an auto-resolving stub and escalations auto-resolve via
-the Director (see `packages/core/src/mcp-server` and the orchestrator).
+**Later milestones (not yet built):** M4 Hermes bridge + Web Push + the precise PreToolUse
+`defer` hold + the **Chat** ("Talk to Hermes") surface; M5 Docker packaging + publish. Today
+the gate's `escalate` action blocks-and-records (the precise in-tool `defer` hold is M4), and
+jobs do not yet resume across a daemon restart.
 
 ## Requirements
 

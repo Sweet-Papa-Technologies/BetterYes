@@ -6,7 +6,15 @@ import { Router } from '../router/index.js';
 import { Coder, type CoderTurnResult } from '../coder/index.js';
 import { Ledger, CircuitBreaker } from '../ledger/index.js';
 import { prepareWorktree, countChangedFiles, removeWorktree } from '../coder/worktree.js';
-import { appendEvent, getJob, updateJob } from '../db/index.js';
+import {
+  appendEvent,
+  createEscalation,
+  getEscalation,
+  getJob,
+  timeoutEscalation,
+  updateJob,
+} from '../db/index.js';
+import type { Escalation } from '@foreman/shared';
 import { buildGateLaunch } from '../gate/index.js';
 import { requireSecret } from '../secrets/index.js';
 import { jobDir } from '../paths.js';
@@ -90,9 +98,27 @@ export class JobRunner {
       appendEvent({ jobId: this.job.id, type: 'plan', level: 'plan', message: plan });
       this.logLine('plan', 'Director produced a plan');
 
+      // ── Optional plan approval (real human-in-the-loop, PRD FR4 / U1) ────────
+      let planGuidance = '';
+      if (this.job.requirePlanApproval) {
+        const ans = await this.raiseAndAwait({
+          question: 'Approve this plan to start the job?',
+          proposedAction: plan.slice(0, 600),
+          reason: 'You asked to approve the plan before this job runs.',
+        });
+        if (ans === 'killed') return this.finishKilled();
+        if (ans !== 'timeout' && ans.decision === 'deny' && !ans.answer) {
+          this.logLine('warn', 'Plan denied by operator');
+          this.setState('killed', 'Plan denied by operator');
+          if (this.job.worktreePath) removeWorktree(this.job.repoPath, this.job.worktreePath);
+          return;
+        }
+        if (ans !== 'timeout' && ans.answer) planGuidance = `\n\nOperator note: ${ans.answer}`;
+      }
+
       // ── Supervision loop ────────────────────────────────────────────────────
       this.setState('running', 'Working');
-      let nextPrompt = `${this.job.brief}\n\nPlan to follow:\n${plan}\n\nBegin now. Work in the current directory only.`;
+      let nextPrompt = `${this.job.brief}\n\nPlan to follow:\n${plan}${planGuidance}\n\nBegin now. Work in the current directory only.`;
       let noProgress = 0;
 
       for (let iteration = 1; iteration <= this.config.loop.max_iterations; iteration++) {
@@ -216,23 +242,28 @@ export class JobRunner {
       }
       case 'blocked':
       case 'awaiting_approval': {
-        // M1 HITL stub: surface the escalation, then auto-resolve via the Director so the job
-        // doesn't wedge. M4 holds here for a real human answer (PreToolUse `defer` + push).
-        this.setState('blocked', 'Needs a decision (auto-resolved in M1)');
-        appendEvent({
-          jobId: this.job.id,
-          type: 'escalation',
-          level: 'warn',
-          message: `Escalation (auto-resolved in M1): ${reason}`,
-          data: { reason, autoResolved: true },
+        // Real human-in-the-loop (M3): hold for an operator answer from the dashboard.
+        const ans = await this.raiseAndAwait({
+          question: `This job needs your decision: ${reason}`,
+          proposedAction: turn.resultText?.slice(0, 400) || reason,
+          reason,
         });
-        const guidance = await this.director.resolve({
-          brief: this.job.brief,
-          ledger: this.ledger,
-          reason: `Coder is blocked/awaiting approval: ${reason}`,
-        });
+        if (ans === 'killed') return { kind: 'review', reason: 'Killed during escalation.' };
         this.setState('running', 'Working');
-        return { kind: 'continue', prompt: guidance };
+        if (ans === 'timeout') {
+          // Fall back to a Director nudge so an unattended job still makes progress.
+          const guidance = await this.director.resolve({
+            brief: this.job.brief,
+            ledger: this.ledger,
+            reason: `No human answer in time; Coder was blocked: ${reason}`,
+          });
+          return { kind: 'continue', prompt: `(No operator answer — proceeding) ${guidance}` };
+        }
+        if (ans.decision === 'deny' && !ans.answer) {
+          return { kind: 'review', reason: 'Operator denied the action.' };
+        }
+        if (ans.answer) return { kind: 'continue', prompt: `Operator says: ${ans.answer}` };
+        return { kind: 'continue', prompt: 'The operator approved — proceed.' };
       }
       case 'error': {
         const guidance = await this.director.resolve({
@@ -286,6 +317,53 @@ export class JobRunner {
       message: 'burn',
       data: { turns: this.job.turns, tokens: this.job.tokens, costUsd: this.job.costUsd, files },
     });
+  }
+
+  /**
+   * Raise a human escalation and hold the job until the operator answers from the dashboard
+   * (PRD FR4). Returns the decision/answer, or 'timeout'/'killed'. M3 holds at the Router /
+   * plan-approval level; M4 upgrades the trigger to the precise PreToolUse `defer`.
+   */
+  private async raiseAndAwait(opts: {
+    question: string;
+    proposedAction?: string;
+    reason?: string;
+  }): Promise<{ decision: 'allow' | 'deny'; answer?: string } | 'timeout' | 'killed'> {
+    const esc = createEscalation({
+      jobId: this.job.id,
+      question: opts.question,
+      proposedAction: opts.proposedAction ?? null,
+      reason: opts.reason ?? null,
+    });
+    this.setState('blocked', 'Needs your decision');
+    appendEvent({
+      jobId: this.job.id,
+      type: 'escalation',
+      level: 'warn',
+      message: opts.question,
+      data: { id: esc.id, proposedAction: opts.proposedAction, reason: opts.reason },
+    });
+
+    const deadline = Date.now() + this.config.loop.escalation_timeout_ms;
+    for (;;) {
+      if (this.controller.killed) return 'killed';
+      const cur: Escalation | null = getEscalation(esc.id);
+      if (cur && cur.state === 'resolved') {
+        appendEvent({
+          jobId: this.job.id,
+          type: 'log',
+          level: 'info',
+          message: `Operator: ${cur.decision ?? 'answered'}${cur.answer ? ` — "${cur.answer}"` : ''}`,
+        });
+        return { decision: cur.decision ?? 'allow', ...(cur.answer ? { answer: cur.answer } : {}) };
+      }
+      if (Date.now() > deadline) {
+        timeoutEscalation(esc.id);
+        this.logLine('warn', 'Escalation timed out');
+        return 'timeout';
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
 
   private async waitWhilePaused(): Promise<void> {

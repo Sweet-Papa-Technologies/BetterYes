@@ -64,6 +64,9 @@ export interface Job {
   /** Director model & Router model resolved for this job (FR7). */
   directorModel: string;
   routerModel: string;
+  /** Operator asked to approve the plan before the job runs (FR4 / M3). */
+  requirePlanApproval: boolean;
+  agentTeams: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,9 +127,18 @@ export interface Escalation {
   proposedAction: string | null;
   reason: string | null;
   state: 'open' | 'resolved' | 'timed_out';
+  /** Operator's verdict once answered. */
+  decision: 'allow' | 'deny' | null;
+  /** Optional free-text answer / redirect from the operator. */
   answer: string | null;
   createdAt: string;
   resolvedAt: string | null;
+}
+
+/** Payload for `POST /escalations/:id/resolve`. */
+export interface ResolveEscalationRequest {
+  decision: 'allow' | 'deny';
+  answer?: string;
 }
 
 // ── Config surfaced to the dashboard (`GET /config`) ─────────────────────────

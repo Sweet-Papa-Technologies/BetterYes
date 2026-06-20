@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import type { Job, JobEvent } from '@foreman/shared';
+import type { Escalation, Job, JobEvent } from '@foreman/shared';
 import { api, connectWs } from '../lib/api';
 import { isActive, needsYou } from '../lib/status';
 
@@ -8,6 +8,8 @@ interface JobsState {
   live: boolean;
   loaded: boolean;
   boardDisconnect: (() => void) | null;
+  // open escalations awaiting a human
+  escalations: Escalation[];
   // currently-open job detail
   detailId: string | null;
   detailEvents: JobEvent[];
@@ -20,6 +22,7 @@ export const useJobsStore = defineStore('jobs', {
     live: false,
     loaded: false,
     boardDisconnect: null,
+    escalations: [],
     detailId: null,
     detailEvents: [],
     detailDisconnect: null,
@@ -33,6 +36,9 @@ export const useJobsStore = defineStore('jobs', {
     },
     needsYouJobs(): Job[] {
       return this.list.filter((j) => needsYou(j.state));
+    },
+    topEscalation(): Escalation | null {
+      return this.escalations[0] ?? null;
     },
     activeCount(): number {
       return this.list.filter((j) => isActive(j.state)).length;
@@ -54,14 +60,35 @@ export const useJobsStore = defineStore('jobs', {
       const jobs = await api.listJobs();
       this.jobs = Object.fromEntries(jobs.map((j) => [j.id, j]));
       this.loaded = true;
+      await this.refreshEscalations();
       this.boardDisconnect?.();
       this.boardDisconnect = connectWs(
         '/ws/jobs',
         (m) => {
-          if (m.kind === 'job') this.jobs[m.job.id] = m.job;
+          if (m.kind === 'job') {
+            const prev = this.jobs[m.job.id];
+            this.jobs[m.job.id] = m.job;
+            // A job's open-question count changing means escalations opened/closed.
+            if (!prev || prev.openQuestions !== m.job.openQuestions || m.job.state === 'blocked') {
+              void this.refreshEscalations();
+            }
+          }
         },
         (live) => (this.live = live),
       );
+    },
+
+    async refreshEscalations() {
+      try {
+        this.escalations = await api.escalations('open');
+      } catch {
+        /* unauthorized / daemon down */
+      }
+    },
+
+    async resolveEscalation(id: string, decision: 'allow' | 'deny', answer?: string) {
+      await api.resolveEscalation(id, decision, answer);
+      this.escalations = this.escalations.filter((e) => e.id !== id);
     },
 
     async openDetail(id: string) {

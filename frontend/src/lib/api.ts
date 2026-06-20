@@ -78,9 +78,14 @@ export const api = {
   kill: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/kill`, { method: 'POST' }),
   escalations: (state?: string) =>
     req<Escalation[]>(`/api/escalations${state ? `?state=${state}` : ''}`),
+  resolveEscalation: (id: string, decision: 'allow' | 'deny', answer?: string) =>
+    req<Escalation>(`/api/escalations/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, ...(answer ? { answer } : {}) }),
+    }),
   getRules: () => req<{ text: string; parsed: RulesFile; path: string }>('/api/rules'),
-  putRules: (text: string) =>
-    req<{ ok: boolean }>('/api/rules', { method: 'PUT', body: JSON.stringify({ text }) }),
+  putRules: (parsed: RulesFile) =>
+    req<{ ok: boolean }>('/api/rules', { method: 'PUT', body: JSON.stringify({ parsed }) }),
 };
 
 /**

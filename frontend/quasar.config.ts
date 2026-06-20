@@ -12,7 +12,8 @@ export default defineConfig((ctx) => {
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
     boot: [
-      'i18n'
+      'i18n',
+      'pwa'
     ],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
@@ -150,16 +151,23 @@ export default defineConfig((ctx) => {
 
     // https://v2.quasar.dev/quasar-cli-vite/developing-pwa/configuring-pwa
     pwa: {
-      workboxMode: 'GenerateSW' // 'GenerateSW' or 'InjectManifest'
-      // swFilename: 'sw.js',
-      // manifestFilename: 'manifest.json',
-      // extendPWAManifestJson (json) {},
-      // useCredentialsForManifestTag: true,
-      // injectPWAMetaTags: false,
-      // extendPWACustomSWConf (rolldownConf) {},
-      // extendPWAGenerateSWOptions (cfg) {},
-      // extendPWAInjectManifestOptions (cfg) {},
-      // extendPWASwTsConfig (tsConfig) {}
+      workboxMode: 'GenerateSW',
+      injectPwaMetaTags: true,
+      manifest: {
+        name: 'FOREMAN',
+        short_name: 'FOREMAN',
+        description: 'Mission control for supervising autonomous AI coding jobs',
+        display: 'standalone',
+        orientation: 'any',
+        background_color: '#0e0f11',
+        theme_color: '#0e0f11',
+        icons: [
+          { src: 'icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icons/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icons/pwa-192x192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+          { src: 'icons/pwa-512x512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
     },
 
     // https://v2.quasar.dev/quasar-cli-vite/developing-cordova-apps/configuring-cordova

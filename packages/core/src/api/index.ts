@@ -12,12 +12,14 @@ import {
   appendEvent,
   createEscalation,
   createJob,
+  getEscalation,
   getJob,
   listEscalations,
   listEvents,
   listJobs,
+  resolveEscalation,
 } from '../db/index.js';
-import { readRules, writeRules } from '../rules/store.js';
+import { readRules, writeRules, writeRulesParsed } from '../rules/store.js';
 import { jobManager } from '../orchestrator/index.js';
 import { bus } from '../bus.js';
 import { createLogger } from '../logger.js';
@@ -25,13 +27,16 @@ import { createLogger } from '../logger.js';
 const log = createLogger('api');
 const VERSION = '0.1.0';
 
-/** Locate the built dashboard bundle (frontend/dist/spa), if present. */
+/** Locate the built dashboard bundle (PWA build preferred, then SPA), if present. */
 function dashboardDist(): string | null {
   const here = path.dirname(fileURLToPath(import.meta.url));
   // src/api -> packages/core -> packages -> repo root
   const root = path.resolve(here, '../../../../');
-  const dist = path.join(root, 'frontend', 'dist', 'spa');
-  return fs.existsSync(path.join(dist, 'index.html')) ? dist : null;
+  for (const mode of ['pwa', 'spa']) {
+    const dist = path.join(root, 'frontend', 'dist', mode);
+    if (fs.existsSync(path.join(dist, 'index.html'))) return dist;
+  }
+  return null;
 }
 
 export async function buildServer(config: ForemanConfig): Promise<FastifyInstance> {
@@ -150,15 +155,38 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     return listEscalations(state);
   });
 
+  // Operator answers an escalation from the dashboard (PRD FR4 / U4).
+  app.post('/api/escalations/:id/resolve', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const body = (req.body as { decision?: 'allow' | 'deny'; answer?: string }) ?? {};
+    const esc = getEscalation(id);
+    if (!esc) return reply.code(404).send({ error: 'not found' });
+    if (esc.state !== 'open') return reply.code(409).send({ error: `already ${esc.state}` });
+    const decision = body.decision === 'deny' ? 'deny' : 'allow';
+    const resolved = resolveEscalation(id, decision, body.answer);
+    appendEvent({
+      jobId: esc.jobId,
+      type: 'escalation',
+      level: 'info',
+      message: `Resolved: ${decision}${body.answer ? ` — "${body.answer}"` : ''}`,
+      data: { id, decision },
+    });
+    return resolved;
+  });
+
   // ── Rules editor (DESIGN §4; editor UI is M3) ──────────────────────────────
   app.get('/api/rules', async () => {
     const { text, parsed, path: p } = readRules(config);
     return { text, parsed, path: p };
   });
   app.put('/api/rules', async (req, reply) => {
-    const { text } = (req.body as { text?: string }) ?? {};
-    if (typeof text !== 'string') return reply.code(400).send({ error: 'text required' });
-    const result = writeRules(config, text);
+    const body = (req.body as { text?: string; parsed?: unknown }) ?? {};
+    const result =
+      body.parsed !== undefined
+        ? writeRulesParsed(config, body.parsed)
+        : typeof body.text === 'string'
+          ? writeRules(config, body.text)
+          : { ok: false as const, error: 'text or parsed required' };
     if (!result.ok) return reply.code(400).send(result);
     return { ok: true }; // gate reads rules.yaml fresh each call → hot-reloaded
   });
