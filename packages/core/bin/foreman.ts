@@ -39,8 +39,33 @@ program.name('foreman').description('FOREMAN — mission control for AI coding j
 program
   .command('serve')
   .description('Start the FOREMAN daemon (REST + WebSocket API + dashboard).')
-  .action(async () => {
+  .option('--with-hermes', 'also start the managed isolated Hermes gateway (see `foreman hermes setup`)')
+  .action(async (opts: { withHermes?: boolean }) => {
     const config = loadConfig();
+
+    if (opts.withHermes) {
+      if (!readMeta()) {
+        console.error('--with-hermes: no managed Hermes found. Run `foreman hermes setup` first.');
+        process.exit(1);
+      }
+      if (isRunning()) {
+        console.log('Managed Hermes gateway already running.');
+      } else {
+        const { port, pid } = startHermes();
+        console.log(`Started managed Hermes gateway (pid ${pid}, port ${port}).`);
+        // Tie its lifecycle to the daemon — stop it when we exit.
+        const shutdown = () => {
+          stopHermes();
+          process.exit(0);
+        };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+      }
+      if (!config.hermes.enabled) {
+        console.warn('Note: hermes.enabled is false in foreman.yaml — the chat panel won\'t use it until you enable it.');
+      }
+    }
+
     await startServer(config);
   });
 

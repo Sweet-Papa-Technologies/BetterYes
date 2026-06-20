@@ -156,10 +156,17 @@ foreman hermes status       # home / port / running / reachable
 foreman hermes stop
 ```
 
-`foreman init` also *offers* this (opt-in). It's bidirectional: the chat panel streams Hermes'
-replies, and Hermes can call FOREMAN's MCP tools (`dispatch_job` / `status` / `redirect`) to
-launch and steer jobs from a conversation. Point at your *own* Hermes instead by editing
-`hermes.base_url` in `foreman.yaml`.
+Once set up, bring up everything in one command — the daemon co-starts the managed gateway
+and stops it again on exit:
+
+```bash
+foreman serve --with-hermes
+```
+
+`foreman init` also *offers* the setup (opt-in). It's bidirectional: the chat panel streams
+Hermes' replies, and Hermes can call FOREMAN's MCP tools (`dispatch_job` / `status` /
+`redirect`) to launch and steer jobs from a conversation. Point at your *own* Hermes instead
+by editing `hermes.base_url` in `foreman.yaml`.
 
 ### Policy profiles
 
@@ -186,7 +193,7 @@ frontend           Quasar (Vue 3) dashboard PWA — the Stitch "mission control"
 foreman init [--project <id>]   provision Gemini key + secrets (incl. VAPID) + litellm.config.yaml
 foreman doctor                  health-check secrets, models, claude, the gate, and the DB
 foreman smoke [--no-full]       prove the gate fires + a trivial job runs end-to-end
-foreman serve                   run the daemon + dashboard
+foreman serve [--with-hermes]   run the daemon + dashboard (optionally co-start managed Hermes)
 foreman secret set|get|list|delete
 foreman job run|list            launch/inspect jobs from the terminal
 foreman hermes setup|start|stop|status   set up/run an isolated Hermes Agent for the chat panel
