@@ -79,9 +79,46 @@ function migrate(d: Database.Database): void {
     );
   `);
 
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint  TEXT PRIMARY KEY,
+      p256dh    TEXT NOT NULL,
+      auth      TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+  `);
+
   // Additive migrations for DBs created by earlier milestones (CREATE TABLE IF NOT EXISTS
   // won't add new columns to an existing table).
   addColumnIfMissing(d, 'escalations', 'decision', 'TEXT');
+}
+
+// ── Web Push subscriptions (M4) ──────────────────────────────────────────────
+export interface PushSub {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+export function addSubscription(sub: PushSub): void {
+  getDb()
+    .prepare(
+      `INSERT INTO push_subscriptions (endpoint, p256dh, auth, createdAt)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth`,
+    )
+    .run(sub.endpoint, sub.keys.p256dh, sub.keys.auth, now());
+}
+
+export function removeSubscription(endpoint: string): void {
+  getDb().prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
+}
+
+export function listSubscriptions(): PushSub[] {
+  const rows = getDb().prepare('SELECT * FROM push_subscriptions').all() as Record<string, unknown>[];
+  return rows.map((r) => ({
+    endpoint: r.endpoint as string,
+    keys: { p256dh: r.p256dh as string, auth: r.auth as string },
+  }));
 }
 
 function addColumnIfMissing(
@@ -342,8 +379,22 @@ export function resolveEscalation(
     )
     .run(decision, answer ?? null, ts, id);
   const job = getJob(cur.jobId);
-  if (job) updateJob(cur.jobId, { openQuestions: Math.max(0, job.openQuestions - 1) });
+  if (job) {
+    const patch: Partial<Job> = { openQuestions: Math.max(0, job.openQuestions - 1) };
+    // Un-block a job that was held by the gate (the in-tool hold). The Coder turn resumes
+    // as soon as the gate's poll sees this resolution.
+    if (job.state === 'blocked' && countOpenEscalations(cur.jobId) <= 1) patch.state = 'running';
+    updateJob(cur.jobId, patch);
+  }
   return getEscalation(id);
+}
+
+function countOpenEscalations(jobId: string): number {
+  return (
+    getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM escalations WHERE jobId = ? AND state = 'open'`)
+      .get(jobId) as { n: number }
+  ).n;
 }
 
 /** Mark an open escalation as timed out (used by the orchestrator's hold timeout). */

@@ -4,6 +4,7 @@ import { useQuasar } from 'quasar';
 import type { PublicConfig } from '@foreman/shared';
 import { api } from '../lib/api';
 import { getToken, setToken } from '../lib/api';
+import { enablePush, pushSupported } from '../lib/push';
 
 const $q = useQuasar();
 const token = ref(getToken());
@@ -22,6 +23,27 @@ function saveToken() {
   setToken(token.value);
   $q.notify({ message: 'Token saved', color: 'positive', position: 'top' });
   void load();
+}
+
+const pushBusy = ref(false);
+const pushOn = ref(false);
+async function turnOnPush() {
+  pushBusy.value = true;
+  try {
+    const r = await enablePush();
+    if (r.ok) {
+      pushOn.value = true;
+      $q.notify({ message: 'Push enabled on this device', color: 'positive', position: 'top' });
+    } else {
+      $q.notify({ message: r.reason ?? 'Could not enable push', color: 'warning', position: 'top' });
+    }
+  } finally {
+    pushBusy.value = false;
+  }
+}
+async function testPush() {
+  await api.testPush();
+  $q.notify({ message: 'Test notification sent', color: 'positive', position: 'top' });
 }
 onMounted(load);
 </script>
@@ -68,7 +90,21 @@ onMounted(load);
 
       <section class="panel q-pa-md">
         <div class="sec-title mono">NOTIFICATIONS</div>
-        <div class="text-muted hint">Web Push / ntfy arrive in M4. Escalations currently surface in the board's needs-you band and on the job view.</div>
+        <div v-if="!pushSupported()" class="text-muted hint">
+          This browser doesn't support Web Push. Install the app to your home screen (iOS) or use a desktop browser.
+        </div>
+        <template v-else>
+          <div class="row items-center q-gutter-sm">
+            <q-btn unelevated no-caps class="save" :loading="pushBusy" @click="turnOnPush">
+              {{ pushOn ? 'Re-enable push' : 'Enable push on this device' }}
+            </q-btn>
+            <q-btn flat no-caps class="ghost" @click="testPush">Send test</q-btn>
+          </div>
+          <div class="text-muted hint q-mt-sm">
+            You'll get a notification when a job needs you (escalation) and when one finishes. Works on
+            the installed PWA; iOS requires Add to Home Screen.
+          </div>
+        </template>
       </section>
     </div>
   </q-page>
@@ -80,6 +116,7 @@ onMounted(load);
 .lbl { display: block; font-size: 10px; letter-spacing: 0.05em; color: var(--fg-muted); margin-bottom: 6px; }
 .fld { background: var(--fg-bg); border: 1px solid var(--fg-border); border-radius: 4px; padding: 2px 10px; }
 .save { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; }
+.ghost { color: var(--fg-text-2); }
 .kv { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--fg-border); font-size: 13px; }
 .kv:last-child { border-bottom: none; }
 .hint { font-size: 12px; }

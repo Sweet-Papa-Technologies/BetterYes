@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import webpush from 'web-push';
 import { findConfigPath } from '../config/index.js';
 import { setSecret, resolveSecret } from '../secrets/index.js';
 import { isKeychainAvailable } from '../secrets/keychain.js';
@@ -140,14 +141,21 @@ export async function runInit(opts: { project: string }): Promise<InitResult> {
 
   // 2. Secrets → keychain (or guide to .env)
   const storedTo: 'keychain' | 'env' = isKeychainAvailable() ? 'keychain' : 'env';
+  // Web Push VAPID keypair (M4) — generated once, reused on re-run.
+  const vapid = webpush.generateVAPIDKeys();
   if (storedTo === 'keychain') {
     setSecret('GEMINI_API_KEY', geminiKey);
     if (!resolveSecret('LITELLM_KEY')) setSecret('LITELLM_KEY', randomToken());
     if (!resolveSecret('FOREMAN_TOKEN')) setSecret('FOREMAN_TOKEN', randomToken());
+    if (!resolveSecret('VAPID_PUBLIC_KEY')) {
+      setSecret('VAPID_PUBLIC_KEY', vapid.publicKey);
+      setSecret('VAPID_PRIVATE_KEY', vapid.privateKey);
+    }
   } else {
     notes.push(
       'Non-macOS: add these to your .env — ' +
-        `GEMINI_API_KEY=${geminiKey}  LITELLM_KEY=${randomToken()}  FOREMAN_TOKEN=${randomToken()}`,
+        `GEMINI_API_KEY=${geminiKey}  LITELLM_KEY=${randomToken()}  FOREMAN_TOKEN=${randomToken()}  ` +
+        `VAPID_PUBLIC_KEY=${vapid.publicKey}  VAPID_PRIVATE_KEY=${vapid.privateKey}`,
     );
   }
 

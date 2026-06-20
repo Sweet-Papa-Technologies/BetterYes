@@ -34,12 +34,16 @@ export function buildGateLaunch(opts: {
   apiBase: string;
   token: string;
 }): GateLaunch {
+  const escTimeoutMs = opts.config.loop.escalation_timeout_ms;
+  // The hook must be allowed to run for at least the whole hold, plus a buffer, or Claude
+  // cancels it mid-escalation. (Default hook timeout is only 600s.)
+  const hookTimeoutSec = Math.ceil(escTimeoutMs / 1000) + 60;
   const settings = {
     hooks: {
       PreToolUse: [
         {
           matcher: '*',
-          hooks: [{ type: 'command', command: `node ${GATE_PATH}` }],
+          hooks: [{ type: 'command', command: `node ${GATE_PATH}`, timeout: hookTimeoutSec }],
         },
       ],
     },
@@ -53,6 +57,7 @@ export function buildGateLaunch(opts: {
       FOREMAN_AUDIT: opts.auditPath,
       FOREMAN_API: opts.apiBase,
       FOREMAN_TOKEN: opts.token,
+      FOREMAN_ESC_TIMEOUT_MS: String(escTimeoutMs),
     },
   };
 }

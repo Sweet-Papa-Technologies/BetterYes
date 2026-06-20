@@ -90,9 +90,10 @@ const go = (to: string) => router.push(to);
       </q-tabs>
     </q-footer>
 
-    <!-- The escalation surface overlays everything when a job needs a human (S3). -->
+    <!-- The escalation surface overlays everything when a job needs a human (S3) — except on
+         the Chat route, where escalations are answered inline in the thread. -->
     <EscalationSheet
-      v-if="store.topEscalation"
+      v-if="store.topEscalation && route.path !== '/chat'"
       :key="store.topEscalation.id"
       :escalation="store.topEscalation"
     />

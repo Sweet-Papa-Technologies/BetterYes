@@ -1,7 +1,7 @@
 /**
- * FOREMAN service worker — makes the dashboard installable and keeps the app shell available.
+ * FOREMAN service worker — makes the dashboard installable, keeps the app shell available,
+ * and delivers Web Push notifications (M4).
  * Cache-first for same-origin static assets; always network for /api and /ws (live data).
- * Web Push handlers are added in M4.
  */
 const CACHE = 'foreman-shell-v1';
 const SHELL = ['./', './index.html', './manifest.json'];
@@ -16,6 +16,42 @@ self.addEventListener('activate', (e) => {
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
+  );
+});
+
+// ── Web Push (M4): escalation / completion notifications ─────────────────────
+self.addEventListener('push', (event) => {
+  let data = { title: 'FOREMAN', body: '', url: '/' };
+  try {
+    data = { ...data, ...event.data.json() };
+  } catch {
+    /* plain-text or empty payload */
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      tag: data.tag,
+      icon: 'icons/pwa-192x192.png',
+      badge: 'icons/pwa-192x192.png',
+      data: { url: data.url ?? '/' },
+      vibrate: [80, 40, 80],
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const c of clients) {
+        if ('focus' in c) {
+          c.navigate(url);
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(url);
+    }),
   );
 });
 

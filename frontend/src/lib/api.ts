@@ -62,6 +62,43 @@ export class ApiError extends Error {
   }
 }
 
+/** Stream a chat completion from Hermes via the daemon's SSE proxy. Resolves when done. */
+export async function chatStream(
+  messages: { role: string; content: string }[],
+  onDelta: (t: string) => void,
+): Promise<{ disabled?: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ messages }),
+  });
+  if (!res.body) return { error: 'no stream' };
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let result: { disabled?: boolean; error?: string } = {};
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      try {
+        const evt = JSON.parse(t.slice(5).trim());
+        if (evt.type === 'delta') onDelta(evt.delta);
+        else if (evt.type === 'disabled') result = { disabled: true };
+        else if (evt.type === 'error') result = { error: evt.error };
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return result;
+}
+
 export const api = {
   config: () => req<PublicConfig>('/api/config'),
   listJobs: () => req<Job[]>('/api/jobs'),
@@ -83,6 +120,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decision, ...(answer ? { answer } : {}) }),
     }),
+  vapidKey: () => req<{ publicKey: string }>('/api/push/vapid'),
+  subscribePush: (sub: PushSubscriptionJSON) =>
+    req<{ ok: boolean }>('/api/push/subscribe', { method: 'POST', body: JSON.stringify(sub) }),
+  testPush: () => req<{ ok: boolean }>('/api/push/test', { method: 'POST' }),
   getRules: () => req<{ text: string; parsed: RulesFile; path: string }>('/api/rules'),
   putRules: (parsed: RulesFile) =>
     req<{ ok: boolean }>('/api/rules', { method: 'PUT', body: JSON.stringify({ parsed }) }),

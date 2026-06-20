@@ -18,9 +18,12 @@ import {
   listEvents,
   listJobs,
   resolveEscalation,
+  updateJob,
 } from '../db/index.js';
 import { readRules, writeRules, writeRulesParsed } from '../rules/store.js';
 import { jobManager } from '../orchestrator/index.js';
+import { push } from '../push/index.js';
+import { HermesClient } from '../hermes/index.js';
 import { bus } from '../bus.js';
 import { createLogger } from '../logger.js';
 
@@ -47,6 +50,7 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
   await app.register(websocket);
 
   const token = requireSecret(config.dashboard.auth_token_env);
+  const hermes = new HermesClient(config);
 
   // ── Bearer auth (REST + WS). Loopback-only bind is set at listen() (NFR). ──
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -132,7 +136,8 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
 
   app.post('/api/jobs/:id/escalations', async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    if (!getJob(id)) return reply.code(404).send({ error: 'not found' });
+    const job = getJob(id);
+    if (!job) return reply.code(404).send({ error: 'not found' });
     const b = req.body as { question?: string; proposedAction?: string; reason?: string };
     const esc = createEscalation({
       jobId: id,
@@ -140,14 +145,22 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
       proposedAction: b.proposedAction ?? null,
       reason: b.reason ?? null,
     });
+    // The gate is holding the tool call — reflect the hold on the board.
+    if (job.state === 'running') updateJob(id, { state: 'blocked', lastActivity: 'Holding for your decision' });
     appendEvent({
       jobId: id,
       type: 'escalation',
       level: 'warn',
       message: `Escalation: ${esc.question}`,
-      data: { id: esc.id, reason: esc.reason },
+      data: { id: esc.id, proposedAction: esc.proposedAction, reason: esc.reason },
     });
     return reply.code(201).send(esc);
+  });
+
+  app.get('/api/escalations/:id', async (req, reply) => {
+    const esc = getEscalation((req.params as { id: string }).id);
+    if (!esc) return reply.code(404).send({ error: 'not found' });
+    return esc;
   });
 
   app.get('/api/escalations', async (req) => {
@@ -172,6 +185,51 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
       data: { id, decision },
     });
     return resolved;
+  });
+
+  // ── Chat → Hermes (PRD FR6). SSE stream; falls back client-side when disabled. ──
+  app.post('/api/chat', async (req, reply) => {
+    const { messages } = (req.body as { messages?: { role: string; content: string }[] }) ?? {};
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    const sse = (obj: unknown) => reply.raw.write(`data: ${JSON.stringify(obj)}\n\n`);
+    if (!hermes.enabled) {
+      sse({ type: 'disabled' });
+      reply.raw.end();
+      return reply;
+    }
+    try {
+      await hermes.streamChat(messages ?? [], (delta) => sse({ type: 'delta', delta }));
+      sse({ type: 'done' });
+    } catch (err) {
+      sse({ type: 'error', error: (err as Error).message });
+    }
+    reply.raw.end();
+    return reply;
+  });
+
+  // ── Web Push (M4) ──────────────────────────────────────────────────────────
+  app.get('/api/push/vapid', async () => ({ publicKey: push.vapidPublicKey() }));
+  app.post('/api/push/subscribe', async (req, reply) => {
+    const sub = req.body as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+    if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
+      return reply.code(400).send({ error: 'invalid subscription' });
+    }
+    push.subscribe({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } });
+    return { ok: true };
+  });
+  app.post('/api/push/unsubscribe', async (req) => {
+    const { endpoint } = (req.body as { endpoint?: string }) ?? {};
+    if (endpoint) push.unsubscribe(endpoint);
+    return { ok: true };
+  });
+  // Lets the operator confirm push delivery works ("send test notification").
+  app.post('/api/push/test', async () => {
+    await push.send({ title: 'FOREMAN', body: 'Test notification — push is working.', url: '/' });
+    return { ok: true };
   });
 
   // ── Rules editor (DESIGN §4; editor UI is M3) ──────────────────────────────
@@ -252,6 +310,7 @@ function send(socket: { send: (d: string) => void }, msg: WsMessage): void {
 
 export async function startServer(config: ForemanConfig): Promise<FastifyInstance> {
   jobManager.init(config);
+  push.init(config);
   const app = await buildServer(config);
   await app.listen({ host: config.dashboard.bind, port: config.dashboard.port });
   log.info(`FOREMAN API on http://${config.dashboard.bind}:${config.dashboard.port}`);

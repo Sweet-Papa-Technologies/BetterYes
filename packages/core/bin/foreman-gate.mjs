@@ -144,7 +144,7 @@ function writeAudit(entry) {
   }
 }
 
-// Fire-and-forget live audit / escalation to core (must NOT affect the decision).
+// Fire-and-forget live audit to core (must NOT affect the decision).
 function postToCore(path, body) {
   const api = process.env.FOREMAN_API;
   const token = process.env.FOREMAN_TOKEN;
@@ -158,6 +158,48 @@ function postToCore(path, body) {
   } catch {
     /* ignore */
   }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Real in-tool hold: create an escalation, then BLOCK (long-poll) until the operator answers
+ * from the dashboard/chat (which also fires a Web Push). Returns the operator's decision.
+ * Fail-safe: any error reaching core → deny (never silently allow). This is what makes
+ * `request_human_approval` real — the Coder's tool call pauses here until a human decides.
+ */
+async function holdForHuman(body) {
+  const api = process.env.FOREMAN_API;
+  const token = process.env.FOREMAN_TOKEN;
+  const jobId = process.env.FOREMAN_JOB_ID ?? '';
+  if (!api || !token) return { decision: 'deny', reason: 'no core to escalate to' };
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  let escId;
+  try {
+    const res = await fetch(`${api}/api/jobs/${jobId}/escalations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return { decision: 'deny', reason: 'could not raise escalation' };
+    escId = (await res.json()).id;
+  } catch {
+    return { decision: 'deny', reason: 'core unreachable' };
+  }
+  const deadline = Date.now() + Number(process.env.FOREMAN_ESC_TIMEOUT_MS ?? 25 * 60 * 1000);
+  while (Date.now() < deadline) {
+    await sleep(1500);
+    try {
+      const r = await fetch(`${api}/api/escalations/${escId}`, { headers });
+      if (!r.ok) continue;
+      const esc = await r.json();
+      if (esc.state === 'resolved') return { decision: esc.decision === 'deny' ? 'deny' : 'allow', answer: esc.answer };
+      if (esc.state === 'timed_out') return { decision: 'deny', reason: 'timed out' };
+    } catch {
+      /* transient — keep polling */
+    }
+  }
+  return { decision: 'deny', reason: 'no answer in time' };
 }
 
 async function main() {
@@ -204,55 +246,46 @@ async function main() {
         break;
       }
     }
-    emit(action, matched === null ? `default ${defaultAction}` : `rule #${matched + 1}`, tool, input, jobId, matched);
+    await emit(action, matched === null ? `default ${defaultAction}` : `rule #${matched + 1}`, tool, input, jobId);
   } catch (err) {
-    emit(onError, `gate error: ${String(err).slice(0, 80)}`, tool, input, jobId, null);
+    await emit(onError, `gate error: ${String(err).slice(0, 80)}`, tool, input, jobId);
   }
 }
 
-function emit(action, ruleLabel, tool, input, jobId, matchedIndex) {
+async function emit(action, ruleLabel, tool, input, jobId) {
   const target = redact(describe(input));
-  const latencyMs = Date.now() - t0;
-  const audit = {
-    ts: new Date().toISOString(),
-    jobId,
-    tool,
-    action,
-    rule: ruleLabel,
-    target,
-    latencyMs,
-  };
-  writeAudit(audit);
+  const audit = { ts: new Date().toISOString(), jobId, tool, action, rule: ruleLabel, target, latencyMs: Date.now() - t0 };
 
   if (action === 'allow') {
     // Durable audit.jsonl already has it; skip the live POST for allows to avoid flooding
     // the dashboard with every routine tool call.
+    writeAudit(audit);
     process.stdout.write(JSON.stringify(decision('allow', `FOREMAN gate: ${ruleLabel}`)));
     return;
   }
   if (action === 'deny') {
-    postToCore(`/api/jobs/${jobId}/audit`, { ...audit });
-    process.stdout.write(
-      JSON.stringify(decision('deny', `FOREMAN gate denied (${ruleLabel}): ${tool} ${target}`)),
-    );
+    writeAudit(audit);
+    postToCore(`/api/jobs/${jobId}/audit`, audit);
+    process.stdout.write(JSON.stringify(decision('deny', `FOREMAN gate denied (${ruleLabel}): ${tool} ${target}`)));
     return;
   }
-  // escalate: record an escalation; M2 blocks (deny) with an explanation. The real human
-  // hold/round-trip (PreToolUse defer → dashboard + push) lands in M4.
-  postToCore(`/api/jobs/${jobId}/escalations`, {
+  // escalate: a REAL human-in-the-loop hold (M4). Block here until the operator answers from
+  // the dashboard/chat (a Web Push fires too), then allow or deny accordingly.
+  writeAudit({ ...audit, action: 'escalate-hold' });
+  postToCore(`/api/jobs/${jobId}/audit`, { ...audit, action: 'escalate' });
+  const verdict = await holdForHuman({
     question: `Approve ${tool}: ${target}?`,
     proposedAction: target,
     reason: ruleLabel,
   });
-  postToCore(`/api/jobs/${jobId}/audit`, { ...audit });
-  process.stdout.write(
-    JSON.stringify(
-      decision(
-        'deny',
-        `FOREMAN gate escalated (${ruleLabel}) — needs human approval (auto-held in M2; real hold in M4): ${tool} ${target}`,
-      ),
-    ),
-  );
+  writeAudit({ ...audit, action: `escalate-${verdict.decision}`, reason: verdict.reason });
+  if (verdict.decision === 'allow') {
+    process.stdout.write(JSON.stringify(decision('allow', `Operator approved: ${tool} ${target}`)));
+  } else {
+    process.stdout.write(
+      JSON.stringify(decision('deny', `Operator/timeout denied (${ruleLabel}): ${tool} ${target}`)),
+    );
+  }
 }
 
 void main();
