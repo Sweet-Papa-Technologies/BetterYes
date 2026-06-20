@@ -38,6 +38,8 @@ This repo implements the full **M1–M5** roadmap in `PRD.md`:
     job cards and inline escalation-answer cards when it isn't.
   - **Hermes bridge** (config-gated): a `/api/chat` SSE proxy and a FOREMAN **MCP server**
     exposing `dispatch_job` / `status` / `redirect` so a Hermes conversation can drive FOREMAN.
+    Verified end-to-end against the real [Hermes Agent](https://github.com/NousResearch/hermes-agent);
+    `foreman hermes setup` stands up an isolated instance for you (see below).
 - ✅ **M5** — packaging: **policy profiles** (throwaway/standard/strict), a `foreman smoke`
   self-test, `Dockerfile` + `docker compose`, a de-hardcoded guided init, and this README.
 
@@ -47,8 +49,8 @@ escalation holds are cleared and each job is re-attached, continuing its Claude 
 
 **Known limitations:** the rule gate enforces literal declared patterns, not semantic intent
 (a denied command can be worked around with a different allowed tool — write rules to target
-the outcome); the live Hermes path and real-device Web Push delivery are built to spec but
-not verified here (no running Hermes / no device in the build environment).
+the outcome); real-device Web Push delivery is built to spec but not verified here (no device
+in the build environment).
 
 ## Requirements
 
@@ -138,6 +140,27 @@ On non-macOS, copy `.env.example` → `.env` and fill it in (`foreman init` prin
 - `.env.example` — every secret name.
 - Runtime state lives in `~/.foreman/` (SQLite `foreman.db`, per-job dirs, worktrees).
 
+### Hermes chat brain (optional)
+
+The **Chat** panel works in command mode out of the box. To make it conversational, FOREMAN
+can stand up an **isolated** [Hermes Agent](https://github.com/NousResearch/hermes-agent) for
+you — its own home + port under `~/.foreman/hermes`, so it never touches a pre-existing
+`~/.hermes` install:
+
+```bash
+foreman hermes setup        # offers to install Hermes if missing; isolated home + port;
+                            # reuses your Gemini key; registers FOREMAN's MCP tools in Hermes;
+                            # enables hermes in foreman.yaml
+foreman hermes start        # run the isolated gateway in the background
+foreman hermes status       # home / port / running / reachable
+foreman hermes stop
+```
+
+`foreman init` also *offers* this (opt-in). It's bidirectional: the chat panel streams Hermes'
+replies, and Hermes can call FOREMAN's MCP tools (`dispatch_job` / `status` / `redirect`) to
+launch and steer jobs from a conversation. Point at your *own* Hermes instead by editing
+`hermes.base_url` in `foreman.yaml`.
+
 ### Policy profiles
 
 Each job picks a profile in the **New Job** form; the gate enforces that profile's rules:
@@ -166,6 +189,7 @@ foreman smoke [--no-full]       prove the gate fires + a trivial job runs end-to
 foreman serve                   run the daemon + dashboard
 foreman secret set|get|list|delete
 foreman job run|list            launch/inspect jobs from the terminal
+foreman hermes setup|start|stop|status   set up/run an isolated Hermes Agent for the chat panel
 foreman mcp-server              run the MCP bridge (ask_director / request_human_approval /
                                 dispatch_job / status / redirect) over stdio
 ```

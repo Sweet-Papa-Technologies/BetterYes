@@ -16,6 +16,17 @@ import { runMcpServer } from '../src/mcp-server/index.js';
 import { hasGcloud, resolveGcpProject, runInit } from '../src/provision/index.js';
 import { gateInstalled } from '../src/gate/index.js';
 import { runSmoke } from '../src/smoke/index.js';
+import {
+  hermesBin,
+  installHermes,
+  setupHermes,
+  startHermes,
+  stopHermes,
+  isRunning,
+  reachable,
+  readMeta,
+  HERMES_INSTALL_URL,
+} from '../src/hermes/setup.js';
 import { ModelClient } from '../src/models/index.js';
 import { createJob, getJob, listJobs, ensureSchema } from '../src/db/index.js';
 import { jobManager } from '../src/orchestrator/index.js';
@@ -47,6 +58,17 @@ program
     console.log(`✓ Router model:   ${r.routerModel}`);
     console.log(`✓ Wrote ${r.litellmConfigPath}`);
     for (const n of r.notes) console.log(`  • ${n}`);
+    // Opt-in offer: set up an isolated Hermes Agent for the chat panel.
+    if (hermesBin() && !readMeta()) {
+      const ans = (await prompt('\nSet up an isolated Hermes Agent for the chat panel? (own home + port, never touches ~/.hermes) [y/N] ')).toLowerCase();
+      if (ans === 'y' || ans === 'yes') {
+        const h = await setupHermes({ registerMcp: true, enableInConfig: true });
+        console.log(`✓ Hermes ready on ${h.baseUrl} (home ${h.home}); start it with: foreman hermes start`);
+      }
+    } else if (!hermesBin()) {
+      console.log(`\nTip: install Hermes for the chat panel — \`foreman hermes setup --install\` (or ${HERMES_INSTALL_URL}).`);
+    }
+
     console.log('\nNext:');
     console.log('  1) export GEMINI_API_KEY (or source .env), then start the proxy:');
     console.log('       litellm --config litellm.config.yaml');
@@ -202,6 +224,85 @@ job
     for (const j of listJobs()) {
       console.log(`${j.id.padEnd(10)} ${j.state.padEnd(9)} ${j.name}`);
     }
+  });
+
+// ── hermes (optional, isolated) ───────────────────────────────────────────────
+const hermes = program
+  .command('hermes')
+  .description('Optional isolated Hermes Agent for the chat panel (own home + port).');
+
+hermes
+  .command('setup')
+  .description('Set up an isolated Hermes Agent under ~/.foreman/hermes — never touches ~/.hermes.')
+  .option('--install', 'install Hermes first if it is missing (runs the official installer)')
+  .option('--port <n>', 'API server port (default: first free port from 8650)', (v) => parseInt(v, 10))
+  .option('--model <m>', 'default Gemini model for Hermes', 'gemini-2.5-flash')
+  .option('--no-register-mcp', 'do not register FOREMAN as an MCP server inside Hermes')
+  .option('--no-enable', 'do not enable hermes in foreman.yaml')
+  .option('--start', 'start the Hermes gateway after setup')
+  .action(async (opts: { install?: boolean; port?: number; model: string; registerMcp: boolean; enable: boolean; start?: boolean }) => {
+    if (!hermesBin()) {
+      if (!opts.install) {
+        console.error(`Hermes is not installed. Re-run with --install, or install it yourself:\n  curl -fsSL ${HERMES_INSTALL_URL} | bash`);
+        process.exit(1);
+      }
+      const ok = (await prompt(`Install Hermes Agent now via the official installer (curl | bash)? [y/N] `)).toLowerCase();
+      if (ok !== 'y' && ok !== 'yes') process.exit(1);
+      if (!installHermes()) {
+        console.error('Hermes install failed.');
+        process.exit(1);
+      }
+    }
+    console.log('Setting up an isolated Hermes Agent (own home + port)…\n');
+    const r = await setupHermes({
+      ...(opts.port ? { port: opts.port } : {}),
+      model: opts.model,
+      registerMcp: opts.registerMcp,
+      enableInConfig: opts.enable,
+    });
+    console.log(`✓ Home:    ${r.home}`);
+    console.log(`✓ Port:    ${r.port}  (${r.baseUrl})`);
+    console.log(`✓ Model:   ${r.model} (gemini)`);
+    console.log(`✓ Key:     stored to ${r.storedKeyTo} as HERMES_API_KEY`);
+    console.log(`✓ MCP:     FOREMAN ${r.mcpRegistered ? 'registered in Hermes (dispatch_job/status/redirect)' : 'not registered'}`);
+    console.log(`✓ Config:  ${r.configUpdated ? 'hermes enabled in foreman.yaml' : 'foreman.yaml unchanged'}`);
+    for (const n of r.notes) console.log(`  • ${n}`);
+    if (opts.start) {
+      const { port } = startHermes();
+      console.log(`\nStarting Hermes gateway… (port ${port})`);
+    } else {
+      console.log('\nStart it with:  foreman hermes start');
+    }
+  });
+
+hermes
+  .command('start')
+  .description('Start the isolated Hermes gateway in the background.')
+  .action(() => {
+    const { port, pid } = startHermes();
+    console.log(`Hermes gateway started (pid ${pid}, port ${port}). Logs: ~/.foreman/hermes/gateway.log`);
+  });
+
+hermes
+  .command('stop')
+  .description('Stop the isolated Hermes gateway.')
+  .action(() => console.log(stopHermes() ? 'Hermes gateway stopped.' : 'Hermes gateway was not running.'));
+
+hermes
+  .command('status')
+  .description('Show the isolated Hermes status.')
+  .action(async () => {
+    const meta = readMeta();
+    if (!meta) {
+      console.log('Hermes is not set up. Run `foreman hermes setup`.');
+      return;
+    }
+    const running = isRunning();
+    const live = running && (await reachable(meta.port));
+    console.log(`home:      ${meta.home}`);
+    console.log(`port:      ${meta.port} (${meta.baseUrl})`);
+    console.log(`process:   ${running ? 'running' : 'stopped'}`);
+    console.log(`reachable: ${live ? 'yes' : 'no'}`);
   });
 
 // ── mcp-server ──────────────────────────────────────────────────────────────--
