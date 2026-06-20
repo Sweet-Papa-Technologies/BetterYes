@@ -12,6 +12,51 @@ import { findConfigPath, type ForemanConfig } from '../config/index.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 // src/gate -> packages/core
 export const GATE_PATH = path.resolve(here, '../../bin/foreman-gate.mjs');
+const FOREMAN_BIN = path.resolve(here, '../../bin/foreman.ts');
+
+/** Resolve the tsx binary used to run FOREMAN's MCP server in-session. */
+function tsxPath(): string | null {
+  const root = path.resolve(here, '../../../../');
+  for (const p of [
+    path.join(root, 'node_modules', '.bin', 'tsx'),
+    path.join(root, 'packages', 'core', 'node_modules', '.bin', 'tsx'),
+  ]) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Build the `--mcp-config` JSON that exposes FOREMAN's MCP server (ask_director,
+ * request_human_approval) back INTO the Coder session (PRD FR2/FR4). The env it carries lets
+ * request_human_approval raise a real escalation against this job and ask_director reach the
+ * live Director. Returns null if tsx isn't available (the session simply runs without it).
+ */
+export function buildMcpConfig(opts: {
+  jobId: string;
+  apiBase: string;
+  token: string;
+  escTimeoutMs: number;
+}): string | null {
+  const tsx = tsxPath();
+  if (!tsx) return null;
+  const cfg = findConfigPath();
+  return JSON.stringify({
+    mcpServers: {
+      foreman: {
+        command: tsx,
+        args: [FOREMAN_BIN, 'mcp-server'],
+        env: {
+          ...(cfg ? { FOREMAN_CONFIG: cfg } : {}),
+          FOREMAN_JOB_ID: opts.jobId,
+          FOREMAN_API: opts.apiBase,
+          FOREMAN_TOKEN: opts.token,
+          FOREMAN_ESC_TIMEOUT_MS: String(opts.escTimeoutMs),
+        },
+      },
+    },
+  });
+}
 
 /** Directory holding the rules files (next to foreman.yaml, else cwd). */
 function rulesDir(config: ForemanConfig): string {

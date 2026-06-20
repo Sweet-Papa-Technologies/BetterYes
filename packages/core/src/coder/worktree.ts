@@ -60,9 +60,18 @@ export function removeWorktree(repoPath: string, wtPath: string): void {
   git(repoPath, ['worktree', 'remove', '--force', wtPath]);
 }
 
+/** List files changed in the worktree vs HEAD (the real "files touched" set). */
+export function changedFiles(wtPath: string): string[] {
+  const r = git(wtPath, ['status', '--porcelain']);
+  if (!r.ok) return [];
+  return r.stdout
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => l.slice(3).trim()) // strip the 2-char status code + space
+    .filter(Boolean);
+}
+
 /** Count files changed in the worktree vs HEAD (drives the "files touched" metric). */
 export function countChangedFiles(wtPath: string): number {
-  const r = git(wtPath, ['status', '--porcelain']);
-  if (!r.ok) return 0;
-  return r.stdout.split('\n').filter((l) => l.trim().length > 0).length;
+  return changedFiles(wtPath).length;
 }

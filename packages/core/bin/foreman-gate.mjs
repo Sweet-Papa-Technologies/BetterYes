@@ -18,8 +18,8 @@
  * Fail-safe (DESIGN §8): any error → the profile's on_error action (default escalate, never
  * silently allow). A `deny` rule is absolute.
  */
-import { readFileSync, appendFileSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { readFileSync, appendFileSync, realpathSync } from 'node:fs';
+import { resolve, sep, dirname, basename, join } from 'node:path';
 import { homedir } from 'node:os';
 import process from 'node:process';
 import YAML from 'yaml';
@@ -51,6 +51,30 @@ function expandHome(p) {
   if (p === '~') return homedir();
   if (p.startsWith('~/')) return homedir() + '/' + p.slice(2);
   return p;
+}
+
+/**
+ * Resolve an absolute path with symlinks followed (DESIGN §4). The target file may not exist
+ * yet (e.g. a Write to a new file), so realpath the deepest EXISTING ancestor and re-append
+ * the non-existing tail. This prevents a symlink inside the worktree pointing at ~/.ssh or
+ * outside the worktree from bypassing path_outside_worktree / path_glob deny rules.
+ */
+function realResolve(p) {
+  const abs = resolve(expandHome(p));
+  const tail = [];
+  let cur = abs;
+  for (let i = 0; i < 64; i++) {
+    try {
+      const real = realpathSync(cur);
+      return tail.length ? join(real, ...tail.reverse()) : real;
+    } catch {
+      tail.push(basename(cur));
+      const parent = dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  }
+  return abs;
 }
 
 // Convert a glob (supports **, *, ?) to an anchored RegExp.
@@ -91,15 +115,18 @@ function toolPath(input) {
 function isOutsideWorktree(input, worktree) {
   const p = toolPath(input);
   if (!p || !worktree) return false;
-  const abs = resolve(worktree, expandHome(p));
-  const root = resolve(worktree);
+  // Resolve symlinks on both sides so a symlinked path can't escape the worktree.
+  const abs = realResolve(resolve(worktree, expandHome(p)));
+  const root = realResolve(worktree);
   return abs !== root && !abs.startsWith(root + sep);
 }
 
 function pathGlobMatches(globs, input) {
   const p = toolPath(input);
   if (!p) return false;
-  const candidates = [p, resolve(p)];
+  const wt = process.env.FOREMAN_WORKTREE || '.';
+  // Include the symlink-resolved absolute path so a symlink to a protected location matches.
+  const candidates = [p, resolve(p), realResolve(p), realResolve(resolve(wt, p))];
   return globs.some((g) => {
     const re = globToRe(g);
     return candidates.some((c) => re.test(c) || re.test(expandHome(c)));

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { RouterLabel } from '@foreman/shared';
 
 /**
@@ -5,6 +6,9 @@ import type { RouterLabel } from '@foreman/shared';
  * own, so each call we re-inject a compact digest of what has happened. The ledger also
  * powers the circuit breaker — if the Coder keeps hitting the *same* failure, we stop the
  * loop instead of burning turns.
+ *
+ * Persisted to a per-job `ledger.jsonl` so a job resumed after a daemon restart keeps its
+ * Director context instead of starting blind.
  */
 
 export interface LedgerEntry {
@@ -19,8 +23,29 @@ export interface LedgerEntry {
 export class Ledger {
   private entries: LedgerEntry[] = [];
 
+  /** @param persistPath optional ledger.jsonl path; existing entries are loaded on construction. */
+  constructor(private readonly persistPath?: string) {
+    if (persistPath && fs.existsSync(persistPath)) {
+      for (const line of fs.readFileSync(persistPath, 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          this.entries.push(JSON.parse(line) as LedgerEntry);
+        } catch {
+          /* skip malformed line */
+        }
+      }
+    }
+  }
+
   add(entry: LedgerEntry): void {
     this.entries.push(entry);
+    if (this.persistPath) {
+      try {
+        fs.appendFileSync(this.persistPath, JSON.stringify(entry) + '\n');
+      } catch {
+        /* never fail the loop on a ledger write */
+      }
+    }
   }
 
   get length(): number {

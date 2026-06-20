@@ -25,18 +25,16 @@ const planText = computed(() => {
   const p = [...events.value].reverse().find((e) => e.type === 'plan' || e.type === 'director');
   return p?.message ?? 'No plan yet.';
 });
+// The real changed-file list comes from the latest 'file' event the orchestrator emits.
 const files = computed(() => {
-  const set = new Set<string>();
-  for (const e of events.value) {
-    if (e.type === 'log' && e.level === 'exec' && e.message.includes('/')) {
-      const m = e.message.match(/\/[^\s]+/);
-      if (m) set.add(m[0]);
-    }
-  }
-  return [...set];
+  const fe = [...events.value].reverse().find((e) => e.type === 'file');
+  return ((fe?.data?.files as string[] | undefined) ?? []).filter(Boolean);
 });
+// Audit = the gate's per-call rule decisions + router verdicts + escalations + state changes.
 const auditEvents = computed(() =>
-  events.value.filter((e) => e.type === 'router' || e.type === 'escalation' || e.type === 'state'),
+  events.value.filter(
+    (e) => e.type === 'tool' || e.type === 'router' || e.type === 'escalation' || e.type === 'state',
+  ),
 );
 
 watch(id, (v) => v && store.openDetail(v), { immediate: false });
@@ -177,6 +175,7 @@ function hhmmss(ts: string) {
 .t-router { color: var(--fg-planning); }
 .t-escalation { color: var(--fg-accent); }
 .t-state { color: var(--fg-review); }
+.t-tool { color: var(--fg-running); }
 .composer { border-top: 1px solid var(--fg-border); background: var(--fg-surface); }
 .composer-input { background: var(--fg-bg); border: 1px solid var(--fg-border); border-radius: 4px; padding: 2px 10px; }
 .send { color: var(--fg-accent); }

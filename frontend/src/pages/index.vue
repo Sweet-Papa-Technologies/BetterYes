@@ -39,8 +39,20 @@ const newJob = () => router.push('/new');
     <div class="q-pa-md">
       <NeedsYouBand :jobs="store.needsYouJobs" class="q-mb-md" />
 
+      <!-- Loading skeletons (brief §5) -->
+      <div v-if="!store.loaded" class="column q-gutter-md">
+        <div v-for="n in 4" :key="n" class="panel q-pa-md">
+          <div class="row items-center justify-between">
+            <q-skeleton type="text" width="40%" dark />
+            <q-skeleton type="QChip" width="70px" dark />
+          </div>
+          <q-skeleton type="text" width="55%" class="q-mt-sm" dark />
+          <q-skeleton type="rect" height="4px" class="q-mt-md" dark />
+        </div>
+      </div>
+
       <!-- Empty state -->
-      <div v-if="store.loaded && !jobs.length" class="empty column flex-center q-pa-xl text-center">
+      <div v-else-if="store.loaded && !jobs.length" class="empty column flex-center q-pa-xl text-center">
         <div class="empty-grid q-mb-md" />
         <div class="text-h6 text-weight-600">No jobs yet</div>
         <div class="text-2 q-mt-xs">Launch your first one to start supervising.</div>

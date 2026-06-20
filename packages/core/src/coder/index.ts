@@ -59,8 +59,10 @@ export class Coder {
     signal?: AbortSignal;
     /** When present, run under bypassPermissions with the PreToolUse rule gate as arbiter. */
     gate?: { settingsJson: string; env: Record<string, string> };
+    /** FOREMAN's MCP server (ask_director / request_human_approval) exposed into the session. */
+    mcpConfigJson?: string;
   }): Promise<CoderTurnResult> {
-    const { cwd, prompt, resumeSessionId, onEvent, signal, gate } = opts;
+    const { cwd, prompt, resumeSessionId, onEvent, signal, gate, mcpConfigJson } = opts;
     const args = [
       '-p',
       prompt,
@@ -74,6 +76,7 @@ export class Coder {
       gate ? 'bypassPermissions' : this.config.coder.permission_mode,
     ];
     if (gate) args.push('--settings', gate.settingsJson);
+    if (mcpConfigJson) args.push('--mcp-config', mcpConfigJson);
     if (resumeSessionId) args.push('--resume', resumeSessionId);
 
     const env = { ...process.env, ...(gate?.env ?? {}) };

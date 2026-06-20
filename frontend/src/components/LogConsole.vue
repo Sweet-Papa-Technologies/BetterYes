@@ -44,8 +44,12 @@ watch(
       <span class="gutter" :class="levelClass(e)"> [{{ gutter(e) }}]</span>
       <span class="msg" :class="levelClass(e)"> {{ e.message }}</span>
     </div>
-    <div v-if="!lines.length" class="text-muted">Waiting for output…</div>
-    <span class="cursor">▋</span>
+    <!-- Skeleton while the session boots and no output has arrived yet (brief §5). -->
+    <div v-if="!lines.length" class="column q-gutter-xs">
+      <q-skeleton v-for="n in 6" :key="n" type="text" :width="`${40 + ((n * 13) % 50)}%`" dark />
+      <div class="text-muted q-mt-sm">Waiting for output…</div>
+    </div>
+    <span v-else class="cursor">▋</span>
   </div>
 </template>
 

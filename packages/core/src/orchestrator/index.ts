@@ -5,7 +5,7 @@ import { Director } from '../director/index.js';
 import { Router } from '../router/index.js';
 import { Coder, type CoderTurnResult } from '../coder/index.js';
 import { Ledger, CircuitBreaker } from '../ledger/index.js';
-import { prepareWorktree, countChangedFiles, removeWorktree } from '../coder/worktree.js';
+import { prepareWorktree, changedFiles, removeWorktree } from '../coder/worktree.js';
 import {
   appendEvent,
   createEscalation,
@@ -17,7 +17,7 @@ import {
   updateJob,
 } from '../db/index.js';
 import type { Escalation } from '@foreman/shared';
-import { buildGateLaunch } from '../gate/index.js';
+import { buildGateLaunch, buildMcpConfig } from '../gate/index.js';
 import { requireSecret } from '../secrets/index.js';
 import { jobDir } from '../paths.js';
 import path from 'node:path';
@@ -53,7 +53,7 @@ class JobController {
  * concurrency manager (worktree cap, N-in-parallel) is M2.
  */
 export class JobRunner {
-  private ledger = new Ledger();
+  private ledger: Ledger;
   private breaker: CircuitBreaker;
   private director: Director;
   private router: Router;
@@ -65,6 +65,8 @@ export class JobRunner {
     models: ModelClient,
     private controller: JobController,
   ) {
+    // Persisted ledger → a resumed job keeps its Director context across restarts.
+    this.ledger = new Ledger(path.join(jobDir(job.id), 'ledger.jsonl'));
     this.director = new Director(models, job.directorModel);
     this.router = new Router(models, job.routerModel);
     this.coder = new Coder(config);
@@ -225,15 +227,29 @@ export class JobRunner {
     });
   }
 
+  /** FOREMAN's MCP server (ask_director / request_human_approval) exposed into the session. */
+  private mcpConfig(): string | undefined {
+    return (
+      buildMcpConfig({
+        jobId: this.job.id,
+        apiBase: `http://127.0.0.1:${this.config.dashboard.port}`,
+        token: requireSecret(this.config.dashboard.auth_token_env),
+        escTimeoutMs: this.config.loop.escalation_timeout_ms,
+      }) ?? undefined
+    );
+  }
+
   private async runCoderTurn(prompt: string, iteration: number): Promise<CoderTurnResult> {
     this.logLine('exec', `Coder turn ${iteration}`);
     const gate = this.gateLaunch();
+    const mcpConfigJson = this.mcpConfig();
     const turn = await this.coder.runTurn({
       cwd: this.job.worktreePath!,
       prompt,
       resumeSessionId: this.job.sessionId,
       signal: this.controller.abort.signal,
       ...(gate ? { gate } : {}),
+      ...(mcpConfigJson ? { mcpConfigJson } : {}),
       onEvent: (e) => appendEvent({ jobId: this.job.id, type: 'log', level: e.level, message: e.message }),
     });
     if (turn.sessionId && turn.sessionId !== this.job.sessionId) {
@@ -330,20 +346,22 @@ export class JobRunner {
   }
 
   private applyBurn(turn: CoderTurnResult): void {
-    const files = this.job.worktreePath ? countChangedFiles(this.job.worktreePath) : 0;
+    const fileList = this.job.worktreePath ? changedFiles(this.job.worktreePath) : [];
     this.job = updateJob(this.job.id, {
       turns: this.job.turns + 1,
       tokens: this.job.tokens + turn.tokens,
       costUsd: this.job.costUsd + turn.costUsd,
-      filesTouched: files,
+      filesTouched: fileList.length,
       lastActivity: turn.resultText ? turn.resultText.slice(0, 100) : this.job.lastActivity,
     });
     appendEvent({
       jobId: this.job.id,
       type: 'burn',
       message: 'burn',
-      data: { turns: this.job.turns, tokens: this.job.tokens, costUsd: this.job.costUsd, files },
+      data: { turns: this.job.turns, tokens: this.job.tokens, costUsd: this.job.costUsd, files: fileList.length },
     });
+    // The real changed-file list (drives the Job Detail "Files" tab).
+    appendEvent({ jobId: this.job.id, type: 'file', message: `${fileList.length} files changed`, data: { files: fileList } });
   }
 
   /**

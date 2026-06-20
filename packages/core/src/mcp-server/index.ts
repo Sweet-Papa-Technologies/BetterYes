@@ -3,6 +3,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { loadConfig } from '../config/index.js';
 import { requireSecret } from '../secrets/index.js';
+import { ModelClient } from '../models/index.js';
+import { Director } from '../director/index.js';
+import { Ledger } from '../ledger/index.js';
 
 // Resolve the local daemon API + token so the control-plane tools can call back into Core.
 function coreApi(): { base: string; token: string } {
@@ -48,14 +51,29 @@ export function buildMcpServer(): McpServer {
     'ask_director',
     'Ask the FOREMAN Director for higher-level guidance when the task is ambiguous or stuck.',
     { question: z.string().describe('What you need direction on.') },
-    async ({ question }) => ({
-      content: [
-        {
-          type: 'text' as const,
-          text: `Director (M1 stub): proceed with the most direct approach that satisfies the mission brief. Note for the operator: "${question}"`,
-        },
-      ],
-    }),
+    async ({ question }) => {
+      // Real Director: pull the job's brief (for context) and ask the live Director model.
+      try {
+        const config = loadConfig();
+        const jobId = process.env.FOREMAN_JOB_ID;
+        let brief = '(brief unavailable)';
+        if (jobId) {
+          try {
+            const j = (await callCore(`/api/jobs/${jobId}`)) as { job?: { brief?: string } };
+            if (j.job?.brief) brief = j.job.brief;
+          } catch {
+            /* fall back to no brief */
+          }
+        }
+        const director = new Director(new ModelClient(config), config.models.director);
+        const guidance = await director.resolve({ brief, ledger: new Ledger(), reason: question });
+        return textResult(guidance);
+      } catch (e) {
+        return textResult(
+          `(Director unavailable: ${(e as Error).message}) Proceed with the most direct approach that satisfies the brief.`,
+        );
+      }
+    },
   );
 
   server.tool(
