@@ -11,6 +11,10 @@ litellm.config.yaml
 # FOREMAN runtime state lives in ~/.foreman (outside repo), but ignore any local copy
 .foreman/
 
+# local Hermes-bridge testing scaffold (not part of the product)
+hermes-test/
+foreman.test.yaml
+
 # logs
 *.log
 npm-debug.log*

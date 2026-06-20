@@ -102,18 +102,22 @@ async function run(raw: string) {
 }
 
 // Stream a free-text turn to Hermes, appending deltas live to one assistant bubble.
+// Mutate through the reactive array element (messages.value[idx]) so Vue re-renders each chunk.
 async function askHermes(text: string) {
-  const msg: Msg = { id: ++uid, role: 'assistant', text: '' };
-  messages.value.push(msg);
   const history = messages.value
     .filter((m) => m.text)
     .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text! }));
-  const r = await chatStream([...history, { role: 'user', content: text }], (d) => {
-    msg.text = (msg.text ?? '') + d;
+  messages.value.push({ id: ++uid, role: 'assistant', text: '' });
+  const idx = messages.value.length - 1;
+  const set = (t: string) => {
+    messages.value[idx]!.text = t;
     void scroll();
-  });
-  if (r.disabled) msg.text = `Hermes isn't connected. Type 'help' for commands.`;
-  else if (r.error) msg.text = `Hermes error: ${r.error}`;
+  };
+  const r = await chatStream([...history, { role: 'user', content: text }], (d) =>
+    set((messages.value[idx]!.text ?? '') + d),
+  );
+  if (r.disabled) set(`Hermes isn't connected. Type 'help' for commands.`);
+  else if (r.error) set(`Hermes error: ${r.error}`);
 }
 
 async function answer(escId: string, decision: 'allow' | 'deny') {
