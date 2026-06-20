@@ -182,6 +182,8 @@ function handleEvent(
           });
         }
       }
+      // Per-message input+output is a running estimate; the result event's usage (below) is
+      // authoritative and includes cache tokens, so it overwrites this at end-of-turn.
       if (a.message.usage) {
         result.tokens +=
           (a.message.usage.input_tokens ?? 0) + (a.message.usage.output_tokens ?? 0);
@@ -193,6 +195,16 @@ function handleEvent(
       result.resultText = r.result ?? '';
       result.numTurns = r.num_turns ?? 0;
       result.costUsd = r.total_cost_usd ?? 0;
+      // Authoritative token total for the turn — INCLUDING cache creation/read, which
+      // dominate on --resume turns (the whole transcript + files are re-read). Without
+      // these, the token meter wildly undercounts vs the real cost.
+      if (r.usage) {
+        result.tokens =
+          (r.usage.input_tokens ?? 0) +
+          (r.usage.output_tokens ?? 0) +
+          (r.usage.cache_creation_input_tokens ?? 0) +
+          (r.usage.cache_read_input_tokens ?? 0);
+      }
       result.isError = !!r.is_error;
       result.errorSubtype = r.subtype;
       result.permissionDenials = r.permission_denials?.length ?? 0;

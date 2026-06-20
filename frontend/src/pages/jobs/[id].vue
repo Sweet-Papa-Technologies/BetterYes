@@ -99,11 +99,13 @@ function hhmmss(ts: string) {
         </div>
       </div>
 
-      <!-- Burn meters -->
+      <!-- Burn meters (Coder = Claude Code; Gemini supervision is billed separately & is tiny) -->
       <div class="row q-gutter-lg q-mt-sm burns">
         <BurnMeter label="TURNS" :value="job.turns" :max="job.maxTurns" />
-        <BurnMeter label="TOKENS" :value="job.tokens" :max="Math.max(job.tokens, 100000)" color="var(--fg-planning)" />
-        <div class="cost mono text-muted">${{ job.costUsd.toFixed(4) }}</div>
+        <BurnMeter label="CODER TOKENS" :value="job.tokens" :max="Math.max(job.tokens, 100000)" color="var(--fg-planning)" />
+        <div class="cost mono text-muted" title="Claude Code (Coder) spend, from Claude's own reported cost. Gemini Director/Router supervision is billed separately and is comparatively negligible.">
+          ${{ job.costUsd.toFixed(2) }} <span class="cost-tag">coder</span>
+        </div>
       </div>
     </div>
 
@@ -158,7 +160,8 @@ function hhmmss(ts: string) {
 .ctrl-danger { color: var(--fg-failed) !important; }
 .ctrl-approve { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; }
 .burns { align-items: center; }
-.cost { font-size: 12px; align-self: flex-end; }
+.cost { font-size: 12px; align-self: flex-end; cursor: help; }
+.cost-tag { font-size: 9px; color: var(--fg-muted); border: 1px solid var(--fg-border); border-radius: 2px; padding: 0 3px; }
 .tabs { border-bottom: 1px solid var(--fg-border); gap: 18px; }
 .tabbtn { background: none; border: none; color: var(--fg-muted); padding: 10px 0; font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; }
 .tabbtn.on { color: var(--fg-text); border-bottom-color: var(--fg-accent); }

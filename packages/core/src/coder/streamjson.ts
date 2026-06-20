@@ -43,7 +43,12 @@ export interface ResultEvent {
   result?: string;
   num_turns: number;
   total_cost_usd?: number;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
   permission_denials?: Array<{ tool_name?: string; tool_input?: unknown }>;
   terminal_reason?: string;
   session_id: string;
