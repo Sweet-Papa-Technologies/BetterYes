@@ -1,11 +1,24 @@
 // Typed client for the FOREMAN Core API (REST + WebSocket), sharing DTOs with the daemon.
 import type {
   CreateJobRequest,
+  Escalation,
   Job,
   JobEvent,
   PublicConfig,
   WsMessage,
 } from '@foreman/shared';
+
+export interface RuleMatch {
+  tool?: string;
+  path_glob?: string[];
+  path_outside_worktree?: boolean;
+  cmd_regex?: string;
+}
+export interface RulesFile {
+  default_action: 'allow' | 'deny' | 'escalate';
+  on_error: 'allow' | 'deny' | 'escalate';
+  rules: Array<{ match: RuleMatch; action: 'allow' | 'deny' | 'escalate' }>;
+}
 
 // In dev the SPA runs on :9000 and the daemon on :7777; built, it's served same-origin.
 const API_BASE = import.meta.env.DEV
@@ -63,6 +76,11 @@ export const api = {
   pause: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/pause`, { method: 'POST' }),
   resume: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/resume`, { method: 'POST' }),
   kill: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/kill`, { method: 'POST' }),
+  escalations: (state?: string) =>
+    req<Escalation[]>(`/api/escalations${state ? `?state=${state}` : ''}`),
+  getRules: () => req<{ text: string; parsed: RulesFile; path: string }>('/api/rules'),
+  putRules: (text: string) =>
+    req<{ ok: boolean }>('/api/rules', { method: 'PUT', body: JSON.stringify({ text }) }),
 };
 
 /**

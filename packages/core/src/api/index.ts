@@ -8,7 +8,16 @@ import fstatic from '@fastify/static';
 import type { CreateJobRequest, PublicConfig, WsMessage } from '@foreman/shared';
 import type { ForemanConfig } from '../config/index.js';
 import { requireSecret } from '../secrets/index.js';
-import { createJob, getJob, listEvents, listJobs } from '../db/index.js';
+import {
+  appendEvent,
+  createEscalation,
+  createJob,
+  getJob,
+  listEscalations,
+  listEvents,
+  listJobs,
+} from '../db/index.js';
+import { readRules, writeRules } from '../rules/store.js';
 import { jobManager } from '../orchestrator/index.js';
 import { bus } from '../bus.js';
 import { createLogger } from '../logger.js';
@@ -99,6 +108,60 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
   app.post('/api/jobs/:id/kill', async (req) => ({
     ok: jobManager.kill((req.params as { id: string }).id),
   }));
+
+  // ── Gate → core: live audit + escalation records (M2) ──────────────────────
+  // Posted by the PreToolUse gate (fire-and-forget) for deny/escalate decisions.
+  app.post('/api/jobs/:id/audit', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!getJob(id)) return reply.code(404).send({ error: 'not found' });
+    const a = req.body as { tool?: string; action?: string; rule?: string; target?: string };
+    appendEvent({
+      jobId: id,
+      type: 'tool',
+      level: a.action === 'deny' ? 'error' : 'warn',
+      message: `gate ${a.action}: ${a.tool ?? '?'} ${a.target ?? ''} (${a.rule ?? ''})`,
+      data: { ...a },
+    });
+    return { ok: true };
+  });
+
+  app.post('/api/jobs/:id/escalations', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!getJob(id)) return reply.code(404).send({ error: 'not found' });
+    const b = req.body as { question?: string; proposedAction?: string; reason?: string };
+    const esc = createEscalation({
+      jobId: id,
+      question: b.question ?? 'Approve this action?',
+      proposedAction: b.proposedAction ?? null,
+      reason: b.reason ?? null,
+    });
+    appendEvent({
+      jobId: id,
+      type: 'escalation',
+      level: 'warn',
+      message: `Escalation: ${esc.question}`,
+      data: { id: esc.id, reason: esc.reason },
+    });
+    return reply.code(201).send(esc);
+  });
+
+  app.get('/api/escalations', async (req) => {
+    const state = (req.query as { state?: 'open' | 'resolved' | 'timed_out' }).state;
+    return listEscalations(state);
+  });
+
+  // ── Rules editor (DESIGN §4; editor UI is M3) ──────────────────────────────
+  app.get('/api/rules', async () => {
+    const { text, parsed, path: p } = readRules(config);
+    return { text, parsed, path: p };
+  });
+  app.put('/api/rules', async (req, reply) => {
+    const { text } = (req.body as { text?: string }) ?? {};
+    if (typeof text !== 'string') return reply.code(400).send({ error: 'text required' });
+    const result = writeRules(config, text);
+    if (!result.ok) return reply.code(400).send(result);
+    return { ok: true }; // gate reads rules.yaml fresh each call → hot-reloaded
+  });
 
   // ── WebSocket: live job stream ──────────────────────────────────────────────
   app.register(async (scoped) => {

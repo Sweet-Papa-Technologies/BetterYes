@@ -7,6 +7,10 @@ import { Coder, type CoderTurnResult } from '../coder/index.js';
 import { Ledger, CircuitBreaker } from '../ledger/index.js';
 import { prepareWorktree, countChangedFiles, removeWorktree } from '../coder/worktree.js';
 import { appendEvent, getJob, updateJob } from '../db/index.js';
+import { buildGateLaunch } from '../gate/index.js';
+import { requireSecret } from '../secrets/index.js';
+import { jobDir } from '../paths.js';
+import path from 'node:path';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('orchestrator');
@@ -155,13 +159,28 @@ export class JobRunner {
     }
   }
 
+  /** Build the PreToolUse gate launch for this job, if rules are enabled. */
+  private gateLaunch(): { settingsJson: string; env: Record<string, string> } | undefined {
+    if (!this.config.rules.enabled || !this.job.worktreePath) return undefined;
+    return buildGateLaunch({
+      config: this.config,
+      jobId: this.job.id,
+      worktree: this.job.worktreePath,
+      auditPath: path.join(jobDir(this.job.id), 'audit.jsonl'),
+      apiBase: `http://127.0.0.1:${this.config.dashboard.port}`,
+      token: requireSecret(this.config.dashboard.auth_token_env),
+    });
+  }
+
   private async runCoderTurn(prompt: string, iteration: number): Promise<CoderTurnResult> {
     this.logLine('exec', `Coder turn ${iteration}`);
+    const gate = this.gateLaunch();
     const turn = await this.coder.runTurn({
       cwd: this.job.worktreePath!,
       prompt,
       resumeSessionId: this.job.sessionId,
       signal: this.controller.abort.signal,
+      ...(gate ? { gate } : {}),
       onEvent: (e) => appendEvent({ jobId: this.job.id, type: 'log', level: e.level, message: e.message }),
     });
     if (turn.sessionId && turn.sessionId !== this.job.sessionId) {
@@ -276,9 +295,10 @@ export class JobRunner {
   }
 }
 
-// ── Job manager (process-wide registry of running jobs) ───────────────────────
+// ── Job manager: concurrency cap + queue (PRD FR1, M2) ────────────────────────
 class JobManager {
-  private controllers = new Map<string, JobController>();
+  private controllers = new Map<string, JobController>(); // running jobs
+  private queue: Job[] = []; // jobs waiting for a slot
   private config!: ForemanConfig;
   private models!: ModelClient;
 
@@ -287,15 +307,45 @@ class JobManager {
     this.models = new ModelClient(config);
   }
 
+  private get cap(): number {
+    return this.config.concurrency.max_parallel_jobs;
+  }
+
+  /** Enqueue a job; it starts immediately if a slot is free, else waits its turn. */
   start(job: Job): void {
-    if (this.controllers.has(job.id)) return;
+    if (this.controllers.has(job.id) || this.queue.some((j) => j.id === job.id)) return;
+    this.queue.push(job);
+    this.pump();
+  }
+
+  /** Fill open slots from the queue (FIFO), respecting the parallel cap. */
+  private pump(): void {
+    while (this.controllers.size < this.cap && this.queue.length > 0) {
+      const job = this.queue.shift()!;
+      this.launch(job);
+    }
+    // Reflect queue position for anything still waiting.
+    for (const q of this.queue) {
+      const cur = getJob(q.id);
+      if (cur && cur.state === 'created') updateJob(q.id, { lastActivity: 'Queued' });
+    }
+  }
+
+  private launch(job: Job): void {
     const controller = new JobController();
     this.controllers.set(job.id, controller);
     const runner = new JobRunner(job, this.config, this.models, controller);
     runner
       .run()
       .catch((e) => log.error(`runner crashed for ${job.id}: ${(e as Error).message}`))
-      .finally(() => this.controllers.delete(job.id));
+      .finally(() => {
+        this.controllers.delete(job.id);
+        this.pump(); // a slot freed — start the next queued job
+      });
+  }
+
+  queueDepth(): number {
+    return this.queue.length;
   }
 
   redirect(jobId: string, message: string): boolean {
@@ -323,9 +373,19 @@ class JobManager {
 
   kill(jobId: string): boolean {
     const c = this.controllers.get(jobId);
-    if (!c) return false;
-    c.kill();
-    return true;
+    if (c) {
+      c.kill();
+      return true;
+    }
+    // Not running yet — drop it from the queue and mark killed.
+    const idx = this.queue.findIndex((j) => j.id === jobId);
+    if (idx >= 0) {
+      this.queue.splice(idx, 1);
+      updateJob(jobId, { state: 'killed', lastActivity: 'Killed before start' });
+      appendEvent({ jobId, type: 'state', message: 'killed', data: { state: 'killed' } });
+      return true;
+    }
+    return false;
   }
 
   isRunning(jobId: string): boolean {

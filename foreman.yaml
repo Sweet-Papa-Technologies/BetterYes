@@ -29,6 +29,10 @@ loop:
   max_iterations: 40 # hard cap on supervision turns per job
   circuit_breaker_repeats: 3 # stop after this many identical consecutive failures
 
+rules:
+  enabled: true # run the Coder under bypassPermissions with the PreToolUse gate as arbiter
+  # path: ./rules.yaml   # defaults to rules.yaml next to foreman.yaml
+
 hermes:
   enabled: false # M4 — the conversational brain behind the chat panel
   base_url: "http://localhost:8765"

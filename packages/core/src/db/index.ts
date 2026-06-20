@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import type {
   CreateJobRequest,
+  Escalation,
   Job,
   JobEvent,
   JobEventType,
@@ -247,6 +248,59 @@ export function appendEvent(p: AppendEventParams): JobEvent {
   fs.appendFileSync(path.join(jobDir(p.jobId), 'events.jsonl'), JSON.stringify(event) + '\n');
   bus.emitEvent(event);
   return event;
+}
+
+// ── Escalations + audit (M2) ─────────────────────────────────────────────────
+export interface CreateEscalationParams {
+  jobId: string;
+  question: string;
+  proposedAction?: string | null;
+  reason?: string | null;
+}
+
+/** Record an escalation raised by the rule gate; bumps the job's open-question count. */
+export function createEscalation(p: CreateEscalationParams): Escalation {
+  const d = getDb();
+  const ts = now();
+  const n = (d.prepare('SELECT COUNT(*) AS n FROM escalations').get() as { n: number }).n;
+  const id = `ESC-${1000 + n}`;
+  d.prepare(
+    `INSERT INTO escalations (id, jobId, question, proposedAction, reason, state, createdAt)
+     VALUES (?, ?, ?, ?, ?, 'open', ?)`,
+  ).run(id, p.jobId, p.question, p.proposedAction ?? null, p.reason ?? null, ts);
+  const job = getJob(p.jobId);
+  if (job) updateJob(p.jobId, { openQuestions: job.openQuestions + 1 });
+  const esc: Escalation = {
+    id,
+    jobId: p.jobId,
+    question: p.question,
+    proposedAction: p.proposedAction ?? null,
+    reason: p.reason ?? null,
+    state: 'open',
+    answer: null,
+    createdAt: ts,
+    resolvedAt: null,
+  };
+  return esc;
+}
+
+export function listEscalations(state?: 'open' | 'resolved' | 'timed_out'): Escalation[] {
+  const rows = (
+    state
+      ? getDb().prepare('SELECT * FROM escalations WHERE state = ? ORDER BY createdAt DESC').all(state)
+      : getDb().prepare('SELECT * FROM escalations ORDER BY createdAt DESC').all()
+  ) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: r.id as string,
+    jobId: r.jobId as string,
+    question: r.question as string,
+    proposedAction: (r.proposedAction as string) ?? null,
+    reason: (r.reason as string) ?? null,
+    state: r.state as Escalation['state'],
+    answer: (r.answer as string) ?? null,
+    createdAt: r.createdAt as string,
+    resolvedAt: (r.resolvedAt as string) ?? null,
+  }));
 }
 
 export function listEvents(jobId: string, limit = 500): JobEvent[] {

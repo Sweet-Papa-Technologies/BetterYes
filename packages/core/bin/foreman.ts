@@ -14,6 +14,7 @@ import {
 import { startServer } from '../src/api/index.js';
 import { runMcpServer } from '../src/mcp-server/index.js';
 import { GCP_PROJECT, hasGcloud, runInit } from '../src/provision/index.js';
+import { gateInstalled } from '../src/gate/index.js';
 import { ModelClient } from '../src/models/index.js';
 import { createJob, getJob, listJobs, ensureSchema } from '../src/db/index.js';
 import { jobManager } from '../src/orchestrator/index.js';
@@ -66,6 +67,7 @@ program
     check('gcloud on PATH', hasGcloud());
     const claudeV = spawnSync(config.coder.command, ['--version'], { encoding: 'utf8' });
     check('claude CLI', claudeV.status === 0, claudeV.stdout?.trim().split('\n')[0] ?? '');
+    check('rule gate', !config.rules.enabled || gateInstalled(), config.rules.enabled ? 'enabled' : 'disabled');
 
     for (const name of [config.dashboard.auth_token_env, config.endpoint.api_key_env, 'GEMINI_API_KEY']) {
       const r = resolveSecret(name);

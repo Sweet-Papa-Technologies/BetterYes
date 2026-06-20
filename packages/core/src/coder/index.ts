@@ -57,8 +57,10 @@ export class Coder {
     resumeSessionId?: string | null;
     onEvent: (e: CoderEvent) => void;
     signal?: AbortSignal;
+    /** When present, run under bypassPermissions with the PreToolUse rule gate as arbiter. */
+    gate?: { settingsJson: string; env: Record<string, string> };
   }): Promise<CoderTurnResult> {
-    const { cwd, prompt, resumeSessionId, onEvent, signal } = opts;
+    const { cwd, prompt, resumeSessionId, onEvent, signal, gate } = opts;
     const args = [
       '-p',
       prompt,
@@ -68,11 +70,13 @@ export class Coder {
       '--max-turns',
       String(this.config.coder.max_turns),
       '--permission-mode',
-      this.config.coder.permission_mode,
+      // With the gate wired, bypass the built-in prompts and let the gate veto (DESIGN §9.1).
+      gate ? 'bypassPermissions' : this.config.coder.permission_mode,
     ];
+    if (gate) args.push('--settings', gate.settingsJson);
     if (resumeSessionId) args.push('--resume', resumeSessionId);
 
-    const env = { ...process.env };
+    const env = { ...process.env, ...(gate?.env ?? {}) };
     if (this.config.coder.auth === 'oauth') {
       // Force subscription/OAuth path for dev: don't let a stray ANTHROPIC_API_KEY take over.
       delete env.ANTHROPIC_API_KEY;

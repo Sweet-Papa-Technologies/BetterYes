@@ -38,6 +38,14 @@ const ConfigSchema = z.object({
     max_iterations: z.number().int().positive().default(40),
     circuit_breaker_repeats: z.number().int().positive().default(3),
   }),
+  rules: z
+    .object({
+      // When enabled, the Coder runs under bypassPermissions with the PreToolUse gate as the
+      // sole arbiter ("auto-approve most, veto some"). Disable to fall back to coder.permission_mode.
+      enabled: z.boolean().default(true),
+      path: z.string().optional(), // defaults to rules.yaml next to foreman.yaml
+    })
+    .default({ enabled: true }),
   hermes: z
     .object({
       enabled: z.boolean().default(false),
