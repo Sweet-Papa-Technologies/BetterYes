@@ -2,12 +2,14 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { Rocket } from 'lucide-vue-next';
+import { Rocket, FolderSearch } from 'lucide-vue-next';
 import type { PolicyProfile } from '@foreman/shared';
 import { api, ApiError } from '../lib/api';
+import FolderPicker from '../components/FolderPicker.vue';
 
 const router = useRouter();
 const $q = useQuasar();
+const showPicker = ref(false);
 
 const name = ref('');
 const repoPath = ref('');
@@ -54,8 +56,15 @@ async function launch() {
 
       <div>
         <label class="lbl mono">REPOSITORY</label>
-        <q-input v-model="repoPath" dense borderless class="fld mono" placeholder="/path/to/your/git/repo" />
+        <div class="row items-center q-gutter-sm no-wrap">
+          <q-input v-model="repoPath" dense borderless class="fld mono col" placeholder="~/code/my-repo  (supports ~ and $VARS)" />
+          <q-btn unelevated no-caps class="browse" @click="showPicker = true">
+            <FolderSearch :size="16" class="q-mr-xs" /> Browse
+          </q-btn>
+        </div>
       </div>
+
+      <FolderPicker v-if="showPicker" @select="repoPath = $event" @close="showPicker = false" />
 
       <div>
         <label class="lbl mono">BRIEF</label>
@@ -121,4 +130,5 @@ async function launch() {
 .seg-btn.on { background: var(--fg-accent); color: #0e0f11; font-weight: 600; }
 .launch { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; padding: 10px; font-size: 15px; }
 .adv-toggle { background: none; border: none; color: var(--fg-text-2); cursor: pointer; font-size: 12px; padding: 0; }
+.browse { border: 1px solid var(--fg-border); border-radius: 4px; color: var(--fg-text-2); white-space: nowrap; }
 </style>

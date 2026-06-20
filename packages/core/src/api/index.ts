@@ -6,8 +6,9 @@ import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
 import fstatic from '@fastify/static';
 import type { CreateJobRequest, PublicConfig, WsMessage } from '@foreman/shared';
-import type { ForemanConfig } from '../config/index.js';
+import { type ForemanConfig, expandPath } from '../config/index.js';
 import { requireSecret } from '../secrets/index.js';
+import { isGitRepo } from '../coder/worktree.js';
 import {
   appendEvent,
   createEscalation,
@@ -92,14 +93,53 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     if (!body?.name || !body?.brief || !body?.repoPath) {
       return reply.code(400).send({ error: 'name, brief, and repoPath are required' });
     }
+    // Expand ~ / $VARS / relative, then validate it's a git repo before launching.
+    const repoPath = expandPath(body.repoPath);
+    if (!fs.existsSync(repoPath)) {
+      return reply.code(400).send({ error: `Path not found: ${repoPath}` });
+    }
+    if (!isGitRepo(repoPath)) {
+      return reply.code(400).send({ error: `Not a git repo: ${repoPath} (run \`git init\` there first)` });
+    }
     const job = createJob({
       ...body,
+      repoPath,
       directorModel: body.directorModel ?? config.models.director,
       routerModel: body.routerModel ?? config.models.router,
       maxTurns: config.coder.max_turns,
     });
     jobManager.start(job);
     return reply.code(201).send(job);
+  });
+
+  // ── Server-side folder browser for the New Job picker ──────────────────────
+  // The dashboard browses the DAEMON's filesystem (that's where jobs run). Dir names only.
+  app.get('/api/fs/list', async (req, reply) => {
+    const raw = (req.query as { path?: string }).path || '~';
+    let dir: string;
+    try {
+      dir = expandPath(raw);
+    } catch {
+      return reply.code(400).send({ error: 'invalid path' });
+    }
+    try {
+      const entries = fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
+        .map((d) => {
+          const full = path.join(dir, d.name);
+          return { name: d.name, path: full, isGitRepo: fs.existsSync(path.join(full, '.git')) };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        path: dir,
+        parent: path.dirname(dir),
+        isGitRepo: fs.existsSync(path.join(dir, '.git')),
+        entries,
+      };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
   });
 
   // Controls (PRD U3/U6) ──────────────────────────────────────────────────────

@@ -99,8 +99,22 @@ export async function chatStream(
   return result;
 }
 
+export interface DirEntry {
+  name: string;
+  path: string;
+  isGitRepo: boolean;
+}
+export interface DirListing {
+  path: string;
+  parent: string;
+  isGitRepo: boolean;
+  entries: DirEntry[];
+}
+
 export const api = {
   config: () => req<PublicConfig>('/api/config'),
+  fsList: (path?: string) =>
+    req<DirListing>(`/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   listJobs: () => req<Job[]>('/api/jobs'),
   getJob: (id: string) => req<{ job: Job; events: JobEvent[] }>(`/api/jobs/${id}`),
   createJob: (body: CreateJobRequest) =>

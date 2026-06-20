@@ -114,3 +114,18 @@ export function expandHome(p: string): string {
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
   return p;
 }
+
+/**
+ * Expand the shorthands a user might type for a repo path: `~`, `~/...`, `$VAR` / `${VAR}`,
+ * and relative paths (resolved against home for predictability). Returns an absolute path.
+ */
+export function expandPath(p: string): string {
+  let s = (p ?? '').trim();
+  if (!s) return s;
+  s = s
+    .replace(/\$\{([^}]+)\}/g, (_, n) => process.env[n] ?? '')
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, n) => process.env[n] ?? '');
+  s = expandHome(s);
+  if (!path.isAbsolute(s)) s = path.join(os.homedir(), s);
+  return path.resolve(s);
+}
