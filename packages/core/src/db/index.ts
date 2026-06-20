@@ -11,6 +11,7 @@ import type {
   LogLevel,
   PolicyProfile,
 } from '@foreman/shared';
+import { TERMINAL_STATES } from '@foreman/shared';
 import { DB_PATH, ensureForemanHome, ensureJobDir, jobDir } from '../paths.js';
 import { bus } from '../bus.js';
 
@@ -237,6 +238,16 @@ export function listJobs(): Job[] {
   ).map(rowToJob);
 }
 
+/** Jobs still in flight — used to resume work after a daemon restart (PRD FR1). */
+export function listNonTerminalJobs(): Job[] {
+  const placeholders = TERMINAL_STATES.map(() => '?').join(',');
+  return (
+    getDb()
+      .prepare(`SELECT * FROM jobs WHERE state NOT IN (${placeholders}) ORDER BY seq ASC`)
+      .all(...TERMINAL_STATES) as Record<string, unknown>[]
+  ).map(rowToJob);
+}
+
 /** Patch a job's mutable fields, bump updatedAt, persist job.yaml, and broadcast. */
 export function updateJob(id: string, patch: Partial<Job>): Job {
   const current = getJob(id);
@@ -404,6 +415,17 @@ export function timeoutEscalation(id: string): void {
   getDb().prepare(`UPDATE escalations SET state='timed_out', resolvedAt=? WHERE id=?`).run(now(), id);
   const job = getJob(cur.jobId);
   if (job) updateJob(cur.jobId, { openQuestions: Math.max(0, job.openQuestions - 1) });
+}
+
+/** Time out every open escalation for a job (a dead hold after a restart). */
+export function timeoutOpenEscalationsForJob(jobId: string): number {
+  const open = (
+    getDb().prepare(`SELECT id FROM escalations WHERE jobId = ? AND state = 'open'`).all(jobId) as {
+      id: string;
+    }[]
+  );
+  for (const e of open) timeoutEscalation(e.id);
+  return open.length;
 }
 
 export function listEscalations(state?: 'open' | 'resolved' | 'timed_out'): Escalation[] {

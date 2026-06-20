@@ -314,5 +314,7 @@ export async function startServer(config: ForemanConfig): Promise<FastifyInstanc
   const app = await buildServer(config);
   await app.listen({ host: config.dashboard.bind, port: config.dashboard.port });
   log.info(`FOREMAN API on http://${config.dashboard.bind}:${config.dashboard.port}`);
+  // Pick up any jobs left in flight by a previous run (PRD FR1).
+  jobManager.resumeInterrupted();
   return app;
 }

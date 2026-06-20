@@ -41,8 +41,11 @@ This repo implements the full **M1–M5** roadmap in `PRD.md`:
 - ✅ **M5** — packaging: **policy profiles** (throwaway/standard/strict), a `foreman smoke`
   self-test, `Dockerfile` + `docker compose`, a de-hardcoded guided init, and this README.
 
-**Known limitations:** jobs do not yet resume across a daemon restart (an in-flight job
-orphans as `blocked`); the rule gate enforces literal declared patterns, not semantic intent
+**Resume across restart:** on startup the daemon reconciles any non-terminal jobs — stale
+escalation holds are cleared and each job is re-attached, continuing its Claude session via
+`--resume` (or re-planning if it hadn't started coding). An interrupted job is not lost.
+
+**Known limitations:** the rule gate enforces literal declared patterns, not semantic intent
 (a denied command can be worked around with a different allowed tool — write rules to target
 the outcome); the live Hermes path and real-device Web Push delivery are built to spec but
 not verified here (no running Hermes / no device in the build environment).

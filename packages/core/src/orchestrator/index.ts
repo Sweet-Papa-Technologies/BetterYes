@@ -11,7 +11,9 @@ import {
   createEscalation,
   getEscalation,
   getJob,
+  listNonTerminalJobs,
   timeoutEscalation,
+  timeoutOpenEscalationsForJob,
   updateJob,
 } from '../db/index.js';
 import type { Escalation } from '@foreman/shared';
@@ -81,15 +83,25 @@ export class JobRunner {
     appendEvent({ jobId: this.job.id, type: 'log', level, message });
   }
 
-  async run(): Promise<void> {
+  async run(opts: { resume?: boolean } = {}): Promise<void> {
     try {
-      // ── Prepare worktree ──────────────────────────────────────────────────
+      // ── Prepare worktree (idempotent — reuses an existing one on resume) ────
       const wt = prepareWorktree({
         jobId: this.job.id,
         repoPath: this.job.repoPath,
         branch: this.job.branch,
       });
       this.job = updateJob(this.job.id, { worktreePath: wt.path });
+
+      // ── Resume path: a session already exists → skip planning, continue it ──
+      if (opts.resume && this.job.sessionId) {
+        this.logLine('warn', 'Resuming after a restart — continuing the Claude session');
+        this.setState('running', 'Resumed');
+        return this.loop(
+          `The previous run was interrupted and has been restarted. Continue working toward the original brief:\n${this.job.brief}\n\nIf the task is already complete, reply DONE and stop.`,
+        );
+      }
+
       this.logLine('init', `Worktree ready on branch ${wt.branch}`);
 
       // ── Plan ──────────────────────────────────────────────────────────────
@@ -118,7 +130,18 @@ export class JobRunner {
 
       // ── Supervision loop ────────────────────────────────────────────────────
       this.setState('running', 'Working');
-      let nextPrompt = `${this.job.brief}\n\nPlan to follow:\n${plan}${planGuidance}\n\nBegin now. Work in the current directory only.`;
+      return this.loop(
+        `${this.job.brief}\n\nPlan to follow:\n${plan}${planGuidance}\n\nBegin now. Work in the current directory only.`,
+      );
+    } catch (err) {
+      this.fail(err as Error);
+    }
+  }
+
+  /** The Coder → Router → (Director) supervision loop, shared by fresh + resumed runs. */
+  private async loop(initialPrompt: string): Promise<void> {
+    try {
+      let nextPrompt = initialPrompt;
       let noProgress = 0;
 
       for (let iteration = 1; iteration <= this.config.loop.max_iterations; iteration++) {
@@ -178,11 +201,14 @@ export class JobRunner {
       this.logLine('warn', `Hit max iterations (${this.config.loop.max_iterations})`);
       return this.review('Reached the maximum supervision iterations.');
     } catch (err) {
-      const msg = (err as Error).message;
-      log.error(`job ${this.job.id} failed: ${msg}`);
-      appendEvent({ jobId: this.job.id, type: 'error', level: 'error', message: msg });
-      this.setState('failed', `Failed: ${msg.slice(0, 80)}`);
+      this.fail(err as Error);
     }
+  }
+
+  private fail(err: Error): void {
+    log.error(`job ${this.job.id} failed: ${err.message}`);
+    appendEvent({ jobId: this.job.id, type: 'error', level: 'error', message: err.message });
+    this.setState('failed', `Failed: ${err.message.slice(0, 80)}`);
   }
 
   /** Build the PreToolUse gate launch for this job, if rules are enabled. */
@@ -375,9 +401,14 @@ export class JobRunner {
 }
 
 // ── Job manager: concurrency cap + queue (PRD FR1, M2) ────────────────────────
+interface QueueItem {
+  job: Job;
+  resume: boolean;
+}
+
 class JobManager {
   private controllers = new Map<string, JobController>(); // running jobs
-  private queue: Job[] = []; // jobs waiting for a slot
+  private queue: QueueItem[] = []; // jobs waiting for a slot
   private config!: ForemanConfig;
   private models!: ModelClient;
 
@@ -391,31 +422,55 @@ class JobManager {
   }
 
   /** Enqueue a job; it starts immediately if a slot is free, else waits its turn. */
-  start(job: Job): void {
-    if (this.controllers.has(job.id) || this.queue.some((j) => j.id === job.id)) return;
-    this.queue.push(job);
+  start(job: Job, opts: { resume?: boolean } = {}): void {
+    if (this.controllers.has(job.id) || this.queue.some((q) => q.job.id === job.id)) return;
+    this.queue.push({ job, resume: opts.resume ?? false });
     this.pump();
+  }
+
+  /**
+   * Resume jobs left in flight by a previous daemon (PRD FR1). Dead escalation holds are
+   * timed out (the gate process that held them is gone), then each job is re-attached and
+   * its Claude session continued via `--resume`. Called once at startup.
+   */
+  resumeInterrupted(): void {
+    const stuck = listNonTerminalJobs();
+    if (!stuck.length) return;
+    log.info(`resuming ${stuck.length} interrupted job(s) after restart`);
+    for (const job of stuck) {
+      const cleared = timeoutOpenEscalationsForJob(job.id);
+      if (cleared) {
+        appendEvent({
+          jobId: job.id,
+          type: 'log',
+          level: 'warn',
+          message: `Cleared ${cleared} stale hold(s) — the prior session was interrupted`,
+        });
+      }
+      this.start(getJob(job.id) ?? job, { resume: true });
+    }
   }
 
   /** Fill open slots from the queue (FIFO), respecting the parallel cap. */
   private pump(): void {
     while (this.controllers.size < this.cap && this.queue.length > 0) {
-      const job = this.queue.shift()!;
-      this.launch(job);
+      const item = this.queue.shift()!;
+      this.launch(item);
     }
     // Reflect queue position for anything still waiting.
     for (const q of this.queue) {
-      const cur = getJob(q.id);
-      if (cur && cur.state === 'created') updateJob(q.id, { lastActivity: 'Queued' });
+      const cur = getJob(q.job.id);
+      if (cur && cur.state === 'created') updateJob(q.job.id, { lastActivity: 'Queued' });
     }
   }
 
-  private launch(job: Job): void {
+  private launch(item: QueueItem): void {
+    const { job, resume } = item;
     const controller = new JobController();
     this.controllers.set(job.id, controller);
     const runner = new JobRunner(job, this.config, this.models, controller);
     runner
-      .run()
+      .run({ resume })
       .catch((e) => log.error(`runner crashed for ${job.id}: ${(e as Error).message}`))
       .finally(() => {
         this.controllers.delete(job.id);
@@ -457,7 +512,7 @@ class JobManager {
       return true;
     }
     // Not running yet — drop it from the queue and mark killed.
-    const idx = this.queue.findIndex((j) => j.id === jobId);
+    const idx = this.queue.findIndex((q) => q.job.id === jobId);
     if (idx >= 0) {
       this.queue.splice(idx, 1);
       updateJob(jobId, { state: 'killed', lastActivity: 'Killed before start' });
