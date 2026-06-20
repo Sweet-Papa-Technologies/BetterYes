@@ -1,0 +1,9 @@
+# FOREMAN "throwaway" profile — permissive, for scratch repos you don't care about.
+# Still protects secrets; everything else runs without prompting.
+
+default_action: allow
+on_error: escalate
+
+rules:
+  - match: { tool: "*", path_glob: ["~/.ssh/**", "**/.env", "**/secrets/**", "**/*.pem"] }
+    action: deny

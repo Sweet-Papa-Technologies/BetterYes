@@ -13,12 +13,25 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // src/gate -> packages/core
 export const GATE_PATH = path.resolve(here, '../../bin/foreman-gate.mjs');
 
-/** Resolve rules.yaml: config override, else next to foreman.yaml, else repo root. */
-export function resolveRulesPath(config: ForemanConfig): string {
-  if (config.rules.path) return path.resolve(config.rules.path);
+/** Directory holding the rules files (next to foreman.yaml, else cwd). */
+function rulesDir(config: ForemanConfig): string {
+  if (config.rules.path) return path.dirname(path.resolve(config.rules.path));
   const cfg = findConfigPath();
-  const base = cfg ? path.dirname(cfg) : process.cwd();
-  return path.join(base, 'rules.yaml');
+  return cfg ? path.dirname(cfg) : process.cwd();
+}
+
+/**
+ * Resolve the rules file for a job's policy profile (M5). `standard` uses rules.yaml; other
+ * profiles use rules.<profile>.yaml if present, falling back to rules.yaml.
+ */
+export function resolveRulesPath(config: ForemanConfig, profile?: string): string {
+  if (config.rules.path && (!profile || profile === 'standard')) return path.resolve(config.rules.path);
+  const dir = rulesDir(config);
+  if (profile && profile !== 'standard') {
+    const profilePath = path.join(dir, `rules.${profile}.yaml`);
+    if (fs.existsSync(profilePath)) return profilePath;
+  }
+  return path.join(dir, 'rules.yaml');
 }
 
 export interface GateLaunch {
@@ -33,6 +46,7 @@ export function buildGateLaunch(opts: {
   auditPath: string;
   apiBase: string;
   token: string;
+  profile?: string;
 }): GateLaunch {
   const escTimeoutMs = opts.config.loop.escalation_timeout_ms;
   // The hook must be allowed to run for at least the whole hold, plus a buffer, or Claude
@@ -51,7 +65,8 @@ export function buildGateLaunch(opts: {
   return {
     settingsJson: JSON.stringify(settings),
     env: {
-      FOREMAN_RULES: resolveRulesPath(opts.config),
+      FOREMAN_RULES: resolveRulesPath(opts.config, opts.profile),
+      FOREMAN_PROFILE: opts.profile ?? 'standard',
       FOREMAN_WORKTREE: opts.worktree,
       FOREMAN_JOB_ID: opts.jobId,
       FOREMAN_AUDIT: opts.auditPath,

@@ -13,13 +13,26 @@ import { isKeychainAvailable } from '../secrets/keychain.js';
  * writes a LiteLLM proxy config mapping the Director/Router roles to live model IDs.
  */
 
-export const GCP_PROJECT = process.env.FOREMAN_GCP_PROJECT ?? 'sweet-papa-technologies';
 export const DIRECTOR_MODEL = 'gemini-3.5-flash';
 export const ROUTER_MODEL = 'gemini-3.1-flash-lite';
 
 function run(cmd: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
   const r = spawnSync(cmd, args, { encoding: 'utf8' });
   return { ok: r.status === 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+/**
+ * Resolve the GCP project to mint the Gemini key in — no hardcoded project (publish-clean).
+ * Precedence: explicit --project → FOREMAN_GCP_PROJECT → gcloud's active project.
+ */
+export function resolveGcpProject(explicit?: string): string {
+  if (explicit) return explicit;
+  if (process.env.FOREMAN_GCP_PROJECT) return process.env.FOREMAN_GCP_PROJECT;
+  const active = run('gcloud', ['config', 'get-value', 'project']).stdout.trim();
+  if (active && active !== '(unset)') return active;
+  throw new Error(
+    'No GCP project. Pass --project <id>, set FOREMAN_GCP_PROJECT, or run `gcloud config set project <id>`.',
+  );
 }
 
 export function hasGcloud(): boolean {

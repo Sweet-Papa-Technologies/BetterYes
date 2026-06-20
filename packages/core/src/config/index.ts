@@ -97,7 +97,15 @@ export function loadConfig(explicit?: string): ForemanConfig {
       .join('\n');
     throw new Error(`Invalid foreman.yaml${configPath ? ` (${configPath})` : ''}:\n${issues}`);
   }
-  return parsed.data;
+  return applyEnvOverrides(parsed.data);
+}
+
+/** A few env overrides so the daemon is configurable in Docker without editing files. */
+function applyEnvOverrides(c: ForemanConfig): ForemanConfig {
+  if (process.env.FOREMAN_ENDPOINT_URL) c.endpoint.base_url = process.env.FOREMAN_ENDPOINT_URL;
+  if (process.env.FOREMAN_BIND) c.dashboard.bind = process.env.FOREMAN_BIND;
+  if (process.env.FOREMAN_PORT) c.dashboard.port = Number(process.env.FOREMAN_PORT);
+  return c;
 }
 
 /** Expand a leading ~ in a path. */

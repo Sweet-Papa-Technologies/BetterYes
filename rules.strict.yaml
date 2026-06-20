@@ -1,0 +1,25 @@
+# FOREMAN "strict" profile — for repos that matter. Same protections as standard, plus more
+# commands that require your approval (the gate HOLDS the call until you answer), and a
+# deny-on-error fail-safe.
+
+default_action: allow
+on_error: deny # strictest fail-safe: an unreachable broker / bad rules file blocks the call
+
+rules:
+  - match: { tool: "*", path_glob: ["~/.ssh/**", "**/.env", "**/secrets/**", "**/*.pem", "**/.git/config"] }
+    action: deny
+
+  - match: { tool: "Edit|Write", path_outside_worktree: true }
+    action: deny
+
+  - match:
+      tool: "Bash"
+      cmd_regex: "(rm -rf\\s+/|git push --force|git push -f|curl[^|]*\\|\\s*(ba)?sh|wget[^|]*\\|\\s*(ba)?sh|npm publish|pnpm publish)"
+    action: deny
+
+  # Hold for human approval on anything privileged or outward-reaching.
+  - match: { tool: "Bash", cmd_regex: "\\b(docker|systemctl|gcloud|kubectl|terraform|sudo|chmod|chown|ssh|scp)\\b" }
+    action: escalate
+
+  - match: { tool: "WebFetch" }
+    action: escalate

@@ -13,8 +13,9 @@ import {
 } from '../src/secrets/index.js';
 import { startServer } from '../src/api/index.js';
 import { runMcpServer } from '../src/mcp-server/index.js';
-import { GCP_PROJECT, hasGcloud, runInit } from '../src/provision/index.js';
+import { hasGcloud, resolveGcpProject, runInit } from '../src/provision/index.js';
 import { gateInstalled } from '../src/gate/index.js';
+import { runSmoke } from '../src/smoke/index.js';
 import { ModelClient } from '../src/models/index.js';
 import { createJob, getJob, listJobs, ensureSchema } from '../src/db/index.js';
 import { jobManager } from '../src/orchestrator/index.js';
@@ -36,10 +37,11 @@ program
 program
   .command('init')
   .description('Provision the Gemini key, store secrets, and write litellm.config.yaml.')
-  .option('--project <id>', 'GCP project to mint the Gemini key in', GCP_PROJECT)
-  .action(async (opts: { project: string }) => {
-    console.log(`Provisioning FOREMAN in GCP project: ${opts.project}\n`);
-    const r = await runInit({ project: opts.project });
+  .option('--project <id>', 'GCP project to mint the Gemini key in (default: gcloud active project)')
+  .action(async (opts: { project?: string }) => {
+    const project = resolveGcpProject(opts.project);
+    console.log(`Provisioning FOREMAN in GCP project: ${project}\n`);
+    const r = await runInit({ project });
     console.log(`✓ Gemini API key ${r.geminiKeySource} (stored to ${r.storedTo})`);
     console.log(`✓ Director model: ${r.directorModel}`);
     console.log(`✓ Router model:   ${r.routerModel}`);
@@ -91,6 +93,27 @@ program
 
     console.log(ok ? '\nAll checks passed.' : '\nSome checks failed — see above.');
     process.exit(ok ? 0 : 1);
+  });
+
+// ── smoke ──────────────────────────────────────────────────────────────────--
+program
+  .command('smoke')
+  .description('Prove the install works: the rule gate denies a planted forbidden write, and a trivial job runs end-to-end.')
+  .option('--no-full', 'skip the end-to-end job (only check the gate; no LiteLLM/claude needed)')
+  .action(async (opts: { full: boolean }) => {
+    const config = loadConfig();
+    console.log('Running FOREMAN smoke test…\n');
+    const r = await runSmoke(config, { full: opts.full });
+    for (const d of r.details) console.log(`  • ${d}`);
+    const line = (label: string, ok: boolean | null) =>
+      console.log(`${ok === null ? '·' : ok ? '✓' : '✗'} ${label}`);
+    console.log('');
+    line('rule gate denies forbidden write', r.gateDeny);
+    line('rule gate allows normal write', r.gateAllow);
+    if (opts.full) line('trivial job runs end-to-end', r.jobOk);
+    const pass = r.gateDeny && r.gateAllow && (!opts.full || r.jobOk === true);
+    console.log(pass ? '\nSmoke test PASSED.' : '\nSmoke test FAILED.');
+    process.exit(pass ? 0 : 1);
   });
 
 // ── secret ──────────────────────────────────────────────────────────────────--

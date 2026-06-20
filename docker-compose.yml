@@ -1,0 +1,43 @@
+# FOREMAN — one-command run: `docker compose up`.
+#
+# Prereqs: a populated .env (run `foreman init` once on the host, or copy .env.example and
+# fill it in), plus litellm.config.yaml (written by `foreman init`). Mount the repos you want
+# FOREMAN to work in under /work and point job repoPaths there.
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/litellm.config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm.config.yaml:/app/litellm.config.yaml:ro
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LITELLM_KEY: ${LITELLM_KEY}
+    ports:
+      - "4000:4000"
+
+  foreman:
+    build: .
+    depends_on:
+      - litellm
+    environment:
+      # FOREMAN talks to the proxy over the compose network.
+      FOREMAN_ENDPOINT_URL: "http://litellm:4000"
+      FOREMAN_TOKEN: ${FOREMAN_TOKEN}
+      LITELLM_KEY: ${LITELLM_KEY}
+      # In-container Coder auth: API key (set coder.auth: api_key in foreman.yaml).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
+    volumes:
+      - ./foreman.yaml:/app/foreman.yaml:ro
+      - ./rules.yaml:/app/rules.yaml:ro
+      - ./rules.strict.yaml:/app/rules.strict.yaml:ro
+      - ./rules.throwaway.yaml:/app/rules.throwaway.yaml:ro
+      - foreman-data:/data # SQLite + per-job state + worktrees
+      - ${FOREMAN_WORK_DIR:-./work}:/work # the repos FOREMAN operates on
+    ports:
+      - "7777:7777"
+
+volumes:
+  foreman-data:

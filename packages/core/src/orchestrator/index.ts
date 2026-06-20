@@ -195,6 +195,7 @@ export class JobRunner {
       auditPath: path.join(jobDir(this.job.id), 'audit.jsonl'),
       apiBase: `http://127.0.0.1:${this.config.dashboard.port}`,
       token: requireSecret(this.config.dashboard.auth_token_env),
+      profile: this.job.profile,
     });
   }
 

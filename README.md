@@ -11,9 +11,9 @@ prompts.
 > Clean-room personal reimplementation of the EED Buddy supervision pattern. See `PRD.md` and
 > `DESIGN.md` for the full product/architecture spec, and `STITCH_BRIEF.md` for the UI design.
 
-## Status — M1 → M4 complete
+## Status — M1 → M5 complete (v0.1.0)
 
-This repo implements milestones **M1–M4** of the roadmap in `PRD.md`:
+This repo implements the full **M1–M5** roadmap in `PRD.md`:
 
 - ✅ pnpm monorepo: `packages/core` (daemon), `packages/shared` (types), `frontend` (dashboard PWA)
 - ✅ Secrets management — macOS **Keychain** primary, `.env` / env-var fallback
@@ -38,11 +38,14 @@ This repo implements milestones **M1–M4** of the roadmap in `PRD.md`:
     job cards and inline escalation-answer cards when it isn't.
   - **Hermes bridge** (config-gated): a `/api/chat` SSE proxy and a FOREMAN **MCP server**
     exposing `dispatch_job` / `status` / `redirect` so a Hermes conversation can drive FOREMAN.
+- ✅ **M5** — packaging: **policy profiles** (throwaway/standard/strict), a `foreman smoke`
+  self-test, `Dockerfile` + `docker compose`, a de-hardcoded guided init, and this README.
 
-**Not yet built:** M5 — Docker packaging, guided-init polish, profiles, publish. Also: jobs
-do not yet resume across a daemon restart (an in-flight job orphans as `blocked`), and the
-rule gate enforces literal declared patterns, not semantic intent (a denied command can be
-worked around with a different allowed tool — write rules to target the outcome).
+**Known limitations:** jobs do not yet resume across a daemon restart (an in-flight job
+orphans as `blocked`); the rule gate enforces literal declared patterns, not semantic intent
+(a denied command can be worked around with a different allowed tool — write rules to target
+the outcome); the live Hermes path and real-device Web Push delivery are built to spec but
+not verified here (no running Hermes / no device in the build environment).
 
 ## Requirements
 
@@ -66,8 +69,9 @@ export GEMINI_API_KEY="$(security find-generic-password -s foreman -a GEMINI_API
 export LITELLM_KEY="$(security find-generic-password -s foreman -a LITELLM_KEY -w)"
 litellm --config litellm.config.yaml --port 4000 &
 
-# 3) Sanity check
-pnpm foreman doctor
+# 3) Sanity checks
+pnpm foreman doctor       # secrets, models, claude, DB, gate
+pnpm foreman smoke        # proves the rule gate fires + a trivial job runs end-to-end
 
 # 4) Build the dashboard and run the daemon (serves the dashboard at the bind address)
 pnpm build
@@ -77,6 +81,21 @@ pnpm foreman serve        # http://127.0.0.1:7777
 Open `http://127.0.0.1:7777`, go to **Settings**, paste your token
 (`foreman secret get FOREMAN_TOKEN` shows it's set; read the value with
 `security find-generic-password -s foreman -a FOREMAN_TOKEN -w`), then launch a job.
+
+### Docker (`docker compose up`)
+
+The repo ships a `Dockerfile` + `docker-compose.yml` that bring up the daemon + dashboard and
+a LiteLLM proxy. Run `foreman init` once on the host (or fill `.env` from `.env.example`) so
+the keys exist, then:
+
+```bash
+docker compose up --build      # daemon on :7777, LiteLLM on :4000
+```
+
+Notes: in a container the Coder authenticates with an **API key** — set `coder.auth: api_key`
+in `foreman.yaml` and pass `ANTHROPIC_API_KEY` in `.env`. Mount the repos FOREMAN should work
+in via `FOREMAN_WORK_DIR` (default `./work` → `/work`). For subscription/OAuth `claude`,
+running on the host is simpler.
 
 ### Dev mode (hot reload)
 
@@ -112,9 +131,19 @@ On non-macOS, copy `.env.example` → `.env` and fill it in (`foreman init` prin
 - `foreman.yaml` — models, endpoint, coder command, concurrency, loop caps, dashboard bind/port.
   **Models are config, not code** — swap the Director/Router models freely (defaults:
   `gemini-3.5-flash` / `gemini-3.1-flash-lite`, mapped through LiteLLM).
-- `rules.yaml` — the default tool rule set (enforced by the PreToolUse gate in **M2**).
+- `rules.yaml` — the default (`standard`) tool rule set, enforced by the PreToolUse gate.
 - `.env.example` — every secret name.
 - Runtime state lives in `~/.foreman/` (SQLite `foreman.db`, per-job dirs, worktrees).
+
+### Policy profiles
+
+Each job picks a profile in the **New Job** form; the gate enforces that profile's rules:
+
+- **`throwaway`** (`rules.throwaway.yaml`) — permissive; only protects secrets. For scratch repos.
+- **`standard`** (`rules.yaml`) — the default; protects secrets, blocks writes outside the
+  worktree + dangerous shell, escalates infra commands.
+- **`strict`** (`rules.strict.yaml`) — `standard` plus more commands held for approval
+  (sudo/chmod/ssh/WebFetch…) and a `deny`-on-error fail-safe.
 
 ## Layout
 
@@ -128,13 +157,18 @@ frontend           Quasar (Vue 3) dashboard PWA — the Stitch "mission control"
 ## CLI
 
 ```
-foreman init [--project <id>]   provision Gemini key + secrets + litellm.config.yaml
-foreman doctor                  health-check secrets, models, claude, and the DB
+foreman init [--project <id>]   provision Gemini key + secrets (incl. VAPID) + litellm.config.yaml
+foreman doctor                  health-check secrets, models, claude, the gate, and the DB
+foreman smoke [--no-full]       prove the gate fires + a trivial job runs end-to-end
 foreman serve                   run the daemon + dashboard
 foreman secret set|get|list|delete
 foreman job run|list            launch/inspect jobs from the terminal
-foreman mcp-server              run the MCP bridge (ask_director / request_human_approval) over stdio
+foreman mcp-server              run the MCP bridge (ask_director / request_human_approval /
+                                dispatch_job / status / redirect) over stdio
 ```
+
+`foreman init` resolves the GCP project from `--project`, `FOREMAN_GCP_PROJECT`, or your
+active `gcloud` config — no project is hardcoded.
 
 ## Security notes
 

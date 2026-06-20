@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "A Quasar Project",
   "productName": "BetterYes",
-  "author": "Forrester Terry <fterry@stanford.edu>",
+  "author": "FoFo",
   "type": "module",
   "private": true,
   "scripts": {
