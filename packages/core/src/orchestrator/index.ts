@@ -1,4 +1,5 @@
 import type { Job, JobState, RouterLabel } from '@foreman/shared';
+import { TERMINAL_STATES } from '@foreman/shared';
 import type { ForemanConfig } from '../config/index.js';
 import { ModelClient } from '../models/index.js';
 import { Director } from '../director/index.js';
@@ -538,6 +539,36 @@ class JobManager {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Re-launch a terminal job (done / failed / killed) from scratch, reusing its stored brief.
+   * Runtime counters are reset and the Claude sessionId is cleared so the Director re-plans;
+   * the worktree (if it survived) is reused, so partial work isn't thrown away.
+   */
+  retry(jobId: string): { ok: true } | { ok: false; error: string } {
+    if (this.controllers.has(jobId)) return { ok: false, error: 'job is still running' };
+    if (this.queue.some((q) => q.job.id === jobId))
+      return { ok: false, error: 'job is already queued' };
+    const job = getJob(jobId);
+    if (!job) return { ok: false, error: 'not found' };
+    if (!TERMINAL_STATES.includes(job.state))
+      return { ok: false, error: `can't retry a ${job.state} job` };
+    const reset = updateJob(jobId, {
+      state: 'created',
+      sessionId: null,
+      paused: false,
+      turns: 0,
+      tokens: 0,
+      costUsd: 0,
+      filesTouched: 0,
+      openQuestions: 0,
+      lastActivity: 'Re-launching',
+    });
+    appendEvent({ jobId, type: 'state', message: 'created', data: { state: 'created', retry: true } });
+    appendEvent({ jobId, type: 'log', level: 'info', message: 'Re-launched by operator (retry)' });
+    this.start(reset, { resume: false });
+    return { ok: true };
   }
 
   isRunning(jobId: string): boolean {

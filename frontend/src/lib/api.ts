@@ -127,6 +127,7 @@ export const api = {
   pause: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/pause`, { method: 'POST' }),
   resume: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/resume`, { method: 'POST' }),
   kill: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/kill`, { method: 'POST' }),
+  retry: (id: string) => req<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
   escalations: (state?: string) =>
     req<Escalation[]>(`/api/escalations${state ? `?state=${state}` : ''}`),
   resolveEscalation: (id: string, decision: 'allow' | 'deny', answer?: string) =>

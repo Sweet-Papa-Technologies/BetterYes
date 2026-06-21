@@ -45,6 +45,23 @@ function dashboardDist(): string | null {
 
 export async function buildServer(config: ForemanConfig): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+  // Tolerate empty bodies on JSON POSTs. The control routes (pause/resume/kill) carry no
+  // body but the dashboard's fetch sets `Content-Type: application/json`; Fastify's default
+  // parser rejects that with a 400 before the handler runs. Treat empty as `{}`.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      const s = (body as string).trim();
+      if (!s) return done(null, {});
+      try {
+        done(null, JSON.parse(s));
+      } catch (e) {
+        (e as { statusCode?: number }).statusCode = 400;
+        done(e as Error, undefined);
+      }
+    },
+  );
   // Loopback-bound + bearer-auth'd, so reflecting the dev origin is safe and lets
   // `quasar dev` (:9000) talk to the daemon (:7777). In production the SPA is same-origin.
   await app.register(cors, { origin: true });
@@ -158,6 +175,15 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
   app.post('/api/jobs/:id/kill', async (req) => ({
     ok: jobManager.kill((req.params as { id: string }).id),
   }));
+  // Re-launch a finished/failed/killed job from scratch, reusing its stored brief (PRD U6).
+  // Fresh Director plan (sessionId cleared); existing worktree is reused if still present.
+  app.post('/api/jobs/:id/retry', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!getJob(id)) return reply.code(404).send({ error: 'not found' });
+    const result = jobManager.retry(id);
+    if (!result.ok) return reply.code(409).send({ error: result.error });
+    return getJob(id);
+  });
 
   // ── Gate → core: live audit + escalation records (M2) ──────────────────────
   // Posted by the PreToolUse gate (fire-and-forget) for deny/escalate decisions.

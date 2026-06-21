@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send } from 'lucide-vue-next';
+import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send, RotateCcw } from 'lucide-vue-next';
 import { useJobsStore } from '../../stores/jobs';
 import { api } from '../../lib/api';
 import StatusPill from '../../components/StatusPill.vue';
@@ -21,6 +21,10 @@ const tab = ref<'log' | 'plan' | 'files' | 'audit'>('log');
 const redirectText = ref('');
 // Derive from the job (kept live over WS), not local state — so it can't desync.
 const paused = computed(() => job.value?.paused ?? false);
+// Terminal jobs (done/failed/killed) can't be paused/killed — they offer Retry instead.
+const TERMINAL = ['done', 'failed', 'killed'];
+const isTerminal = computed(() => TERMINAL.includes(job.value?.state ?? ''));
+const retrying = ref(false);
 
 const planText = computed(() => {
   const p = [...events.value].reverse().find((e) => e.type === 'plan' || e.type === 'director');
@@ -58,6 +62,17 @@ async function kill() {
   await api.kill(id.value);
   notify('Kill signal sent', 'warning');
 }
+async function retry() {
+  retrying.value = true;
+  try {
+    await api.retry(id.value);
+    notify('Re-launched — running again with the same brief');
+  } catch {
+    notify('Retry failed', 'negative');
+  } finally {
+    retrying.value = false;
+  }
+}
 async function approvePlan() {
   await api.redirect(id.value, 'Plan approved — proceed.');
   notify('Plan approved');
@@ -87,15 +102,22 @@ function hhmmss(ts: string) {
           </div>
         </div>
         <div class="row items-center q-gutter-xs controls">
-          <q-btn flat dense no-caps size="sm" class="ctrl" @click="pauseResume">
-            <component :is="paused ? Play : Pause" :size="15" /> <span class="gt-xs q-ml-xs">{{ paused ? 'Resume' : 'Pause' }}</span>
-          </q-btn>
-          <q-btn flat dense no-caps size="sm" class="ctrl ctrl-danger" @click="kill">
-            <Square :size="15" /> <span class="gt-xs q-ml-xs">Kill</span>
-          </q-btn>
-          <q-btn v-if="job.state === 'review'" unelevated dense no-caps size="sm" class="ctrl-approve" @click="approvePlan">
-            <Check :size="15" /> <span class="q-ml-xs">Approve</span>
-          </q-btn>
+          <template v-if="isTerminal">
+            <q-btn unelevated dense no-caps size="sm" class="ctrl-approve" :loading="retrying" @click="retry">
+              <RotateCcw :size="15" /> <span class="q-ml-xs">Retry</span>
+            </q-btn>
+          </template>
+          <template v-else>
+            <q-btn flat dense no-caps size="sm" class="ctrl" @click="pauseResume">
+              <component :is="paused ? Play : Pause" :size="15" /> <span class="gt-xs q-ml-xs">{{ paused ? 'Resume' : 'Pause' }}</span>
+            </q-btn>
+            <q-btn flat dense no-caps size="sm" class="ctrl ctrl-danger" @click="kill">
+              <Square :size="15" /> <span class="gt-xs q-ml-xs">Kill</span>
+            </q-btn>
+            <q-btn v-if="job.state === 'review'" unelevated dense no-caps size="sm" class="ctrl-approve" @click="approvePlan">
+              <Check :size="15" /> <span class="q-ml-xs">Approve</span>
+            </q-btn>
+          </template>
         </div>
       </div>
 
