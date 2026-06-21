@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { GitBranch, FileText } from 'lucide-vue-next';
+import { GitBranch, FileText, Folder } from 'lucide-vue-next';
 import type { Job } from '@foreman/shared';
 import { needsYou } from '../lib/status';
-import { timeAgo } from '../lib/ui';
+import { timeAgo, folderName } from '../lib/ui';
 import { useNow } from '../composables/useNow';
 import StatusPill from './StatusPill.vue';
 import BurnMeter from './BurnMeter.vue';
@@ -31,6 +31,7 @@ const go = () => router.push(`/jobs/${props.job.id}`);
     </div>
 
     <div class="row items-center q-gutter-xs q-mt-sm">
+      <span class="code-chip" :title="job.repoPath"><Folder :size="11" /> {{ folderName(job.repoPath) }}</span>
       <span class="code-chip"><GitBranch :size="11" /> {{ job.branch }}</span>
     </div>
 

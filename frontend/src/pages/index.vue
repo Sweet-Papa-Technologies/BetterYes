@@ -117,6 +117,7 @@ const retry = () => store.loadAndSubscribe();
         <div class="row items-center no-wrap header-row mono text-muted">
           <div class="col-title">JOB TITLE</div>
           <div class="col-id">ID</div>
+          <div class="col-folder">FOLDER</div>
           <div class="col-branch">BRANCH</div>
           <div class="col-status">STATUS</div>
           <div class="col-activity">LAST ACTIVITY</div>
@@ -150,6 +151,7 @@ const retry = () => store.loadAndSubscribe();
 .header-row { padding: 10px 16px; border-bottom: 1px solid var(--fg-border); font-size: 10px; letter-spacing: 0.05em; gap: 12px; }
 .header-row .col-title { flex: 0 0 200px; }
 .header-row .col-id { flex: 0 0 90px; }
+.header-row .col-folder { flex: 0 0 140px; }
 .header-row .col-branch { flex: 0 0 150px; }
 .header-row .col-status { flex: 0 0 120px; }
 .header-row .col-activity { flex: 1 1 auto; }

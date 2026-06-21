@@ -2,10 +2,10 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send, RotateCcw, GitMerge } from 'lucide-vue-next';
+import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send, RotateCcw, GitMerge, Folder } from 'lucide-vue-next';
 import { useJobsStore } from '../../stores/jobs';
 import { api, ApiError } from '../../lib/api';
-import { copyText, isTyping } from '../../lib/ui';
+import { copyText, isTyping, folderName } from '../../lib/ui';
 import StatusPill from '../../components/StatusPill.vue';
 import BurnMeter from '../../components/BurnMeter.vue';
 import LogConsole from '../../components/LogConsole.vue';
@@ -148,6 +148,7 @@ function hhmmss(ts: string) {
           </div>
           <div class="row items-center q-gutter-sm q-mt-xs">
             <span class="mono text-muted jid copyable" title="Click to copy ID" @click="copyText(job.id, 'Job ID')">{{ job.id }}</span>
+            <span class="code-chip copyable" :title="job.repoPath" @click="copyText(job.repoPath, 'Folder')"><Folder :size="11" /> {{ folderName(job.repoPath) }}</span>
             <span class="code-chip copyable" title="Click to copy branch" @click="copyText(job.branch, 'Branch')"><GitBranch :size="11" /> {{ job.branch }}</span>
           </div>
         </div>

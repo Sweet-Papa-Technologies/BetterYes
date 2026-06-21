@@ -26,6 +26,12 @@ export function timeAgo(iso: string, nowMs = Date.now()): string {
   return new Date(iso).toLocaleDateString();
 }
 
+/** The last path segment of a repo path ("…/code/BetterYes" → "BetterYes"); full path kept for title. */
+export function folderName(p: string): string {
+  const parts = (p ?? '').replace(/[/\\]+$/, '').split(/[/\\]/);
+  return parts[parts.length - 1] || p || '—';
+}
+
 /** True when focus is in a text field — used to ignore single-key shortcuts while typing. */
 export function isTyping(): boolean {
   const el = document.activeElement as HTMLElement | null;

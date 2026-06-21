@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { GitBranch } from 'lucide-vue-next';
+import { GitBranch, Folder } from 'lucide-vue-next';
 import type { Job } from '@foreman/shared';
 import { needsYou } from '../lib/status';
-import { copyText, timeAgo } from '../lib/ui';
+import { copyText, timeAgo, folderName } from '../lib/ui';
 import { useNow } from '../composables/useNow';
 import StatusPill from './StatusPill.vue';
 
@@ -21,6 +21,7 @@ const burnPct = () => (props.job.maxTurns ? Math.round((props.job.turns / props.
   <div class="job-row row items-center no-wrap cursor-pointer" :class="{ attn: needsYou(job.state) }" @click="go">
     <div class="col-title ellipsis">{{ job.name }}</div>
     <div class="col-id mono text-muted copyable" title="Click to copy ID" @click.stop="copyText(job.id, 'Job ID')">{{ job.id }}</div>
+    <div class="col-folder mono text-muted copyable ellipsis" :title="job.repoPath" @click.stop="copyText(job.repoPath, 'Folder')"><Folder :size="11" /> {{ folderName(job.repoPath) }}</div>
     <div class="col-branch"><span class="code-chip"><GitBranch :size="11" /> {{ job.branch }}</span></div>
     <div class="col-status"><StatusPill :state="job.state" /></div>
     <div class="col-activity text-2 ellipsis">{{ job.lastActivity }} <span class="ago mono text-muted">· {{ ago }}</span></div>
@@ -45,6 +46,7 @@ const burnPct = () => (props.job.maxTurns ? Math.round((props.job.turns / props.
 .job-row.attn { border-left: 2px solid var(--fg-accent); background: rgba(255, 176, 32, 0.04); }
 .col-title { flex: 0 0 200px; font-weight: 600; }
 .col-id { flex: 0 0 90px; font-size: 12px; }
+.col-folder { flex: 0 0 140px; font-size: 12px; display: flex; align-items: center; gap: 4px; min-width: 0; }
 .copyable { cursor: pointer; }
 .copyable:hover { color: var(--fg-accent); }
 .ago { font-size: 11px; opacity: 0.7; }
