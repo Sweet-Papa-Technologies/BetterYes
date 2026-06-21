@@ -22,3 +22,6 @@ npm-debug.log*
 # editor
 .idea/
 *.tsbuildinfo
+
+# Playwright MCP scratch output
+.playwright-mcp/

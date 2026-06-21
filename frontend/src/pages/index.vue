@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { Plus } from 'lucide-vue-next';
+import { Plus, Search, X } from 'lucide-vue-next';
 import { useJobsStore } from '../stores/jobs';
+import { needsYou } from '../lib/status';
 import JobCard from '../components/JobCard.vue';
 import JobRow from '../components/JobRow.vue';
 import NeedsYouBand from '../components/NeedsYouBand.vue';
@@ -13,7 +14,25 @@ const router = useRouter();
 const store = useJobsStore();
 
 const s = computed(() => store.summary);
-const jobs = computed(() => store.list);
+const query = ref('');
+type StatusFilter = 'all' | 'running' | 'needs' | 'done';
+const statusFilter = ref<StatusFilter>('all');
+function toggleStatus(f: StatusFilter) {
+  statusFilter.value = statusFilter.value === f ? 'all' : f;
+}
+
+const jobs = computed(() => {
+  const term = query.value.trim().toLowerCase();
+  return store.list.filter((j) => {
+    if (term && !`${j.name} ${j.id} ${j.branch} ${j.lastActivity}`.toLowerCase().includes(term)) return false;
+    if (statusFilter.value === 'running' && j.state !== 'running' && j.state !== 'planning') return false;
+    if (statusFilter.value === 'needs' && !needsYou(j.state)) return false;
+    if (statusFilter.value === 'done' && j.state !== 'done') return false;
+    return true;
+  });
+});
+const filtering = computed(() => !!query.value.trim() || statusFilter.value !== 'all');
+
 const newJob = () => router.push('/new');
 const retry = () => store.loadAndSubscribe();
 </script>
@@ -28,16 +47,23 @@ const retry = () => store.loadAndSubscribe();
           <span class="conn" :class="store.live ? 'live' : 'down'" :title="store.live ? 'live' : 'reconnecting…'" />
         </span>
         <span class="mono summary">
-          <span class="text-running">{{ s.running }} running</span>
+          <button class="fchip text-running" :class="{ on: statusFilter === 'running' }" @click="toggleStatus('running')">{{ s.running }} running</button>
           <span class="text-muted"> · </span>
-          <span :class="s.needsYou ? 'text-accent' : 'text-muted'">{{ s.needsYou }} needs you</span>
+          <button class="fchip" :class="[s.needsYou ? 'text-accent' : 'text-muted', { on: statusFilter === 'needs' }]" @click="toggleStatus('needs')">{{ s.needsYou }} needs you</button>
           <span class="text-muted"> · </span>
-          <span class="text-2">{{ s.done }} done</span>
+          <button class="fchip text-2" :class="{ on: statusFilter === 'done' }" @click="toggleStatus('done')">{{ s.done }} done</button>
         </span>
       </div>
-      <q-btn unelevated dense no-caps class="new-btn" @click="newJob">
-        <Plus :size="16" class="q-mr-xs" /> New Job
-      </q-btn>
+      <div class="row items-center q-gutter-sm">
+        <div class="search row items-center no-wrap">
+          <Search :size="14" class="text-muted" />
+          <input v-model="query" class="search-input mono" placeholder="Filter jobs…" aria-label="Filter jobs" />
+          <button v-if="query" class="search-clear" aria-label="Clear filter" @click="query = ''"><X :size="13" /></button>
+        </div>
+        <q-btn unelevated dense no-caps class="new-btn" @click="newJob">
+          <Plus :size="16" class="q-mr-xs" /> New Job
+        </q-btn>
+      </div>
     </div>
 
     <div class="q-pa-md">
@@ -67,12 +93,18 @@ const retry = () => store.loadAndSubscribe();
         </div>
       </div>
 
-      <!-- Empty state -->
-      <div v-else-if="store.loaded && !store.loadError && !jobs.length" class="empty column flex-center q-pa-xl text-center">
+      <!-- Empty state — no jobs at all -->
+      <div v-else-if="store.loaded && !store.loadError && !store.list.length" class="empty column flex-center q-pa-xl text-center">
         <div class="empty-grid q-mb-md" />
         <div class="text-h6 text-weight-600">No jobs yet</div>
         <div class="text-2 q-mt-xs">Launch your first one to start supervising.</div>
         <q-btn unelevated no-caps class="new-btn q-mt-lg" @click="newJob"><Plus :size="16" class="q-mr-xs" /> New Job</q-btn>
+      </div>
+
+      <!-- Filtered to nothing -->
+      <div v-else-if="store.loaded && !store.loadError && filtering && !jobs.length" class="empty column flex-center q-pa-xl text-center">
+        <div class="text-2">No jobs match this filter.</div>
+        <q-btn flat no-caps class="q-mt-sm" @click="query = ''; statusFilter = 'all'">Clear filter</q-btn>
       </div>
 
       <!-- Mobile: cards -->
@@ -104,6 +136,14 @@ const retry = () => store.loadAndSubscribe();
 .conn.live { background: var(--fg-running); box-shadow: 0 0 6px var(--fg-running); }
 .conn.down { background: var(--fg-muted); }
 .summary { font-size: 13px; }
+.fchip { background: none; border: none; padding: 1px 4px; border-radius: 4px; cursor: pointer; font: inherit; color: inherit; }
+.fchip:hover { background: var(--fg-surface-elevated); }
+.fchip.on { background: var(--fg-surface-elevated); outline: 1px solid var(--fg-border); }
+.search { background: var(--fg-bg); border: 1px solid var(--fg-border); border-radius: 4px; padding: 3px 8px; gap: 6px; }
+.search-input { background: none; border: none; outline: none; color: var(--fg-text); font-size: 13px; width: 150px; }
+.search-input::placeholder { color: var(--fg-muted); }
+.search-clear { background: none; border: none; color: var(--fg-muted); cursor: pointer; display: flex; padding: 0; }
+.search-clear:hover { color: var(--fg-text); }
 .text-running { color: var(--fg-running); }
 .text-accent { color: var(--fg-accent); }
 .new-btn { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; padding: 4px 12px; }

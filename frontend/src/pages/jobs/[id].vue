@@ -5,6 +5,7 @@ import { useQuasar } from 'quasar';
 import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send, RotateCcw, GitMerge } from 'lucide-vue-next';
 import { useJobsStore } from '../../stores/jobs';
 import { api, ApiError } from '../../lib/api';
+import { copyText, isTyping } from '../../lib/ui';
 import StatusPill from '../../components/StatusPill.vue';
 import BurnMeter from '../../components/BurnMeter.vue';
 import LogConsole from '../../components/LogConsole.vue';
@@ -46,8 +47,25 @@ const auditEvents = computed(() =>
 );
 
 watch(id, (v) => v && store.openDetail(v), { immediate: false });
-onMounted(() => store.openDetail(id.value));
-onUnmounted(() => store.closeDetail());
+
+// Detail shortcuts (ignored while typing): Esc → back, p → pause/resume.
+function onKey(e: KeyboardEvent) {
+  if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'Escape') {
+    router.back();
+  } else if (e.key === 'p' && !isTerminal.value) {
+    e.preventDefault();
+    void pauseResume();
+  }
+}
+onMounted(() => {
+  store.openDetail(id.value);
+  window.addEventListener('keydown', onKey);
+});
+onUnmounted(() => {
+  store.closeDetail();
+  window.removeEventListener('keydown', onKey);
+});
 
 async function doRedirect() {
   const msg = redirectText.value.trim();
@@ -61,9 +79,18 @@ async function pauseResume() {
   if (paused.value) await api.resume(id.value);
   else await api.pause(id.value);
 }
-async function kill() {
-  await api.kill(id.value);
-  notify('Kill signal sent', 'warning');
+function kill() {
+  $q.dialog({
+    title: 'Kill job',
+    message: `Stop <b>${job.value?.name}</b> and remove its worktree? This can't be undone.`,
+    html: true,
+    cancel: true,
+    persistent: true,
+    ok: { label: 'Kill', color: 'negative', noCaps: true },
+  }).onOk(async () => {
+    await api.kill(id.value);
+    notify('Kill signal sent', 'warning');
+  });
 }
 async function retry() {
   retrying.value = true;
@@ -120,8 +147,8 @@ function hhmmss(ts: string) {
             <StatusPill :state="job.state" />
           </div>
           <div class="row items-center q-gutter-sm q-mt-xs">
-            <span class="mono text-muted jid">{{ job.id }}</span>
-            <span class="code-chip"><GitBranch :size="11" /> {{ job.branch }}</span>
+            <span class="mono text-muted jid copyable" title="Click to copy ID" @click="copyText(job.id, 'Job ID')">{{ job.id }}</span>
+            <span class="code-chip copyable" title="Click to copy branch" @click="copyText(job.branch, 'Branch')"><GitBranch :size="11" /> {{ job.branch }}</span>
           </div>
         </div>
         <div class="row items-center q-gutter-xs controls">
@@ -189,10 +216,11 @@ function hhmmss(ts: string) {
         v-model="redirectText"
         dense borderless
         class="col composer-input mono"
-        placeholder="Tell this job to…"
+        :disable="isTerminal"
+        :placeholder="isTerminal ? 'Job finished — Retry to run it again' : 'Tell this job to…'"
         @keyup.enter="doRedirect"
       />
-      <q-btn flat round dense class="send" @click="doRedirect"><Send :size="18" /></q-btn>
+      <q-btn flat round dense class="send" :disable="isTerminal" @click="doRedirect"><Send :size="18" /></q-btn>
     </div>
   </q-page>
 
@@ -204,6 +232,8 @@ function hhmmss(ts: string) {
 .dheader { border-bottom: 1px solid var(--fg-border); background: var(--fg-surface); }
 .jname { font-size: 16px; max-width: 40vw; }
 .jid { font-size: 12px; }
+.copyable { cursor: pointer; }
+.copyable:hover { color: var(--fg-accent); }
 .controls .ctrl { border: 1px solid var(--fg-border); border-radius: 4px; color: var(--fg-text-2); }
 .ctrl-danger { color: var(--fg-failed) !important; }
 .ctrl-approve { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; }

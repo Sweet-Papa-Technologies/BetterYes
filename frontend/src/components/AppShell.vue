@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { LayoutGrid, MessageSquare, ShieldCheck, Settings as SettingsIcon } from 'lucide-vue-next';
 import { useJobsStore } from '../stores/jobs';
+import { isTyping } from '../lib/ui';
 import EscalationSheet from './EscalationSheet.vue';
 
 const $q = useQuasar();
@@ -21,6 +22,23 @@ const nav = [
 const needsYou = computed(() => store.summary.needsYou);
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to));
 const go = (to: string) => router.push(to);
+
+// Global shortcuts (ignored while typing): n=New Job, g then b/c/r/s=navigate, ?=help.
+const showHelp = ref(false);
+let chord = false;
+function onKey(e: KeyboardEvent) {
+  if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '?') { showHelp.value = true; return; }
+  if (e.key === 'n') { e.preventDefault(); void router.push('/new'); return; }
+  if (e.key === 'g') { chord = true; setTimeout(() => (chord = false), 800); return; }
+  if (chord) {
+    chord = false;
+    const dest = { b: '/', c: '/chat', r: '/rules', s: '/settings' }[e.key];
+    if (dest) { e.preventDefault(); void router.push(dest); }
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKey));
+onUnmounted(() => window.removeEventListener('keydown', onKey));
 </script>
 
 <template>
@@ -97,6 +115,23 @@ const go = (to: string) => router.push(to);
       :key="store.topEscalation.id"
       :escalation="store.topEscalation"
     />
+
+    <!-- Keyboard shortcuts (press ?) -->
+    <q-dialog v-model="showHelp">
+      <div class="help panel-elevated">
+        <div class="text-weight-600 q-mb-md">Keyboard shortcuts</div>
+        <div v-for="row in [
+          ['n', 'New job'],
+          ['g then b / c / r / s', 'Go to Board / Chat / Rules / Settings'],
+          ['p', 'Pause / resume (in a job)'],
+          ['Esc', 'Back (in a job)'],
+          ['?', 'This help'],
+        ]" :key="row[1]" class="help-row row items-center q-py-xs">
+          <kbd class="mono">{{ row[0] }}</kbd>
+          <span class="col text-2 q-ml-md">{{ row[1] }}</span>
+        </div>
+      </div>
+    </q-dialog>
   </q-layout>
 </template>
 
@@ -122,5 +157,12 @@ const go = (to: string) => router.push(to);
 .needs-dot {
   position: absolute; top: -2px; right: -4px; width: 8px; height: 8px;
   background: var(--fg-accent); border-radius: 9999px;
+}
+.help { width: 420px; max-width: 92vw; padding: 20px; border: 1px solid var(--fg-border); }
+.help-row { border-bottom: 1px solid var(--fg-border); }
+.help-row:last-child { border-bottom: none; }
+.help kbd {
+  background: var(--fg-bg); border: 1px solid var(--fg-border); border-radius: 4px;
+  padding: 2px 8px; font-size: 12px; color: var(--fg-text); min-width: 140px; display: inline-block;
 }
 </style>

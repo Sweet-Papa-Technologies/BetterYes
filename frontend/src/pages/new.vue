@@ -73,8 +73,10 @@ async function launch() {
           type="textarea"
           dense borderless
           class="fld brief"
-          placeholder="Rebuild the Moods app: …  Describe what you want done."
+          placeholder="Rebuild the Moods app: …  Describe what you want done.  (⌘/Ctrl+Enter to launch)"
           autogrow
+          @keydown.meta.enter="launch"
+          @keydown.ctrl.enter="launch"
         />
       </div>
 

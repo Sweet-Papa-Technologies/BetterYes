@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { GitBranch, FileText } from 'lucide-vue-next';
 import type { Job } from '@foreman/shared';
 import { needsYou } from '../lib/status';
+import { timeAgo } from '../lib/ui';
+import { useNow } from '../composables/useNow';
 import StatusPill from './StatusPill.vue';
 import BurnMeter from './BurnMeter.vue';
 
 const props = defineProps<{ job: Job }>();
 const router = useRouter();
+const now = useNow();
+const ago = computed(() => timeAgo(props.job.updatedAt, now.value));
 const go = () => router.push(`/jobs/${props.job.id}`);
 </script>
 
@@ -32,7 +37,7 @@ const go = () => router.push(`/jobs/${props.job.id}`);
     <div class="text-2 q-mt-sm job-activity ellipsis-2-lines">{{ job.lastActivity }}</div>
 
     <div class="row items-center justify-between q-mt-md no-wrap">
-      <span class="mono text-muted files"><FileText :size="12" /> {{ job.filesTouched }} files</span>
+      <span class="mono text-muted files"><FileText :size="12" /> {{ job.filesTouched }} files · {{ ago }}</span>
       <BurnMeter
         class="burn-col"
         label="TURNS"
