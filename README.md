@@ -95,6 +95,44 @@ pnpm foreman job run --repo /path/to/a/git/repo \
 **Docker:** `docker compose up --build` brings up the daemon + a LiteLLM proxy (see
 [docs](docs/DESIGN.md) and `docker-compose.yml`).
 
+## Steering a job
+
+Open a job to drive it from the detail header:
+
+- **Pause / Resume** — halt at the next turn boundary and pick back up.
+- **Kill** — stop the job and remove its worktree.
+- **Approve** — appears when a job is in `review` (or when you required plan approval).
+- **Tell this job to…** — send a redirect; it lands at the next turn boundary.
+
+When a job finishes (`done` / `failed` / `killed`), the header swaps to two actions:
+
+- **Retry** — re-launch from scratch **reusing the same brief**, with a fresh Director plan
+  (counters reset, Claude session cleared). The existing worktree is reused, so partial work
+  isn't thrown away — your prompt is never lost to a failed run.
+- **Merge** — merge the job's worktree branch back into your repo and clean up. It commits any
+  uncommitted work on the branch, then merges `--no-ff` into the repo's **current** branch and
+  removes the worktree + branch. It **fails closed**: a merge conflict aborts with nothing
+  changed (your repo and the worktree are left intact to resolve by hand), and a dirty target
+  repo is refused until you commit/stash. Killed jobs have no worktree, so Merge is hidden.
+
+## Chat (Hermes)
+
+The dashboard's chat panel is powered by a [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+that can answer questions and **act on FOREMAN** (dispatch / redirect / query jobs) over MCP.
+Manage it entirely from **Settings → HERMES (CHAT BRAIN)** — changes take effect immediately,
+no daemon restart:
+
+- **Managed (local)** — one click provisions an **isolated** instance under `~/.foreman/hermes`
+  (its own home + port, so it never touches a pre-existing `~/.hermes`), registers FOREMAN's
+  MCP, and starts the gateway. If Hermes isn't installed, the panel installs it in the
+  background and flips to ready on its own. Start/Stop the gateway from the same panel.
+- **Remote** (advanced) — point chat at any remote Hermes by base URL; an optional API key is
+  stored in your Keychain (`HERMES_REMOTE_KEY`).
+- **Off** — disable the bridge; the chat panel falls back to structured commands.
+
+Prefer the terminal? `foreman hermes setup [--install] [--start]`, then `start` / `stop` /
+`status`. Co-start the managed gateway with the daemon via `foreman serve --with-hermes`.
+
 ## How it works
 
 ```
