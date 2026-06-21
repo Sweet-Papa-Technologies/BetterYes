@@ -173,7 +173,11 @@ export class JobRunner {
           data: { label: verdict.label, reason: verdict.reason },
         });
 
-        const failureSignature = turn.isError
+        // error_max_turns is a yield checkpoint, not a failure: the Coder simply reached its
+        // internal step cap and handed control back. The Router/progress-guard judge whether
+        // real work is happening — so don't let a long task trip the circuit breaker on it.
+        const isRealFailure = turn.isError && turn.errorSubtype !== 'error_max_turns';
+        const failureSignature = isRealFailure
           ? `${turn.errorSubtype ?? 'error'}:${(turn.resultText || verdict.reason).slice(0, 60)}`
           : undefined;
         const tripped = this.breaker.record(failureSignature);

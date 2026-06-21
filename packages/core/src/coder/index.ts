@@ -209,11 +209,16 @@ function handleEvent(
       result.errorSubtype = r.subtype;
       result.permissionDenials = r.permission_denials?.length ?? 0;
       if (r.result?.trim()) summaryParts.push(`[result] ${r.result.trim()}`);
+      // Hitting --max-turns isn't a real error — it's the Coder yielding control back to the
+      // supervisor mid-task, which then resumes the same session. Log it as a checkpoint.
+      const maxTurns = r.subtype === 'error_max_turns';
       onEvent({
-        level: r.is_error ? 'error' : 'sync',
-        message: r.is_error
-          ? `Turn ended: ${r.subtype}`
-          : `Turn complete (${r.num_turns} steps)`,
+        level: maxTurns ? 'warn' : r.is_error ? 'error' : 'sync',
+        message: maxTurns
+          ? `Reached step limit (${r.num_turns}) — handing back to supervision, will resume`
+          : r.is_error
+            ? `Turn ended: ${r.subtype}`
+            : `Turn complete (${r.num_turns} steps)`,
       });
       break;
     }
