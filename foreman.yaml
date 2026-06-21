@@ -34,7 +34,7 @@ rules:
   # path: ./rules.yaml   # defaults to rules.yaml next to foreman.yaml
 
 hermes:
-  enabled: false # M4 — the conversational brain behind the chat panel
+  enabled: true # M4 — the conversational brain behind the chat panel
   base_url: "http://localhost:8650"
   api_key_env: "HERMES_API_KEY"
 

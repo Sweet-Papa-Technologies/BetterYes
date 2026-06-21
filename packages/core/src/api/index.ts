@@ -36,6 +36,7 @@ import {
   selectManaged,
   selectRemote,
   disableHermes,
+  setHermesModel,
   installHermesAsync,
   installState,
   HERMES_INSTALL_URL,
@@ -420,6 +421,21 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     }
     if (b.source === 'off') return { ok: disableHermes() };
     return reply.code(400).send({ ok: false, error: 'source must be managed | remote | off' });
+  });
+
+  // Change the managed instance's model (restarts the gateway so it takes effect).
+  app.post('/api/hermes/model', async (req, reply) => {
+    const { model } = (req.body as { model?: string }) ?? {};
+    const r = setHermesModel(model ?? '');
+    if (!r.ok) return reply.code(400).send(r);
+    let restarted = false;
+    if (hermesRunning()) {
+      stopHermes();
+      await new Promise((res) => setTimeout(res, 1200)); // let the port free before re-binding
+      startHermes();
+      restarted = true;
+    }
+    return { ...r, restarted };
   });
 
   // ── Web Push (M4) ──────────────────────────────────────────────────────────

@@ -125,7 +125,9 @@ no daemon restart:
 - **Managed (local)** — one click provisions an **isolated** instance under `~/.foreman/hermes`
   (its own home + port, so it never touches a pre-existing `~/.hermes`), registers FOREMAN's
   MCP, and starts the gateway. If Hermes isn't installed, the panel installs it in the
-  background and flips to ready on its own. Start/Stop the gateway from the same panel.
+  background and flips to ready on its own. Start/Stop the gateway from the same panel, and
+  pick its **model** — a Gemini id (default `gemini-3.1-flash-lite`; bump to `gemini-3.5-flash`
+  for a smarter chat). Hermes calls Gemini directly, so it must be a real Gemini model name.
 - **Remote** (advanced) — point chat at any remote Hermes by base URL; an optional API key is
   stored in your Keychain (`HERMES_REMOTE_KEY`).
 - **Off** — disable the bridge; the chat panel falls back to structured commands.

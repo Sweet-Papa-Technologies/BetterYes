@@ -190,6 +190,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    setModel: (model: string) =>
+      req<{ ok: boolean; model?: string; restarted?: boolean; error?: string }>('/api/hermes/model', {
+        method: 'POST',
+        body: JSON.stringify({ model }),
+      }),
   },
   getRules: () => req<{ text: string; parsed: RulesFile; path: string }>('/api/rules'),
   putRules: (parsed: RulesFile) =>

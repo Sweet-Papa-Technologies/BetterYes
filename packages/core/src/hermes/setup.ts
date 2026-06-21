@@ -29,6 +29,10 @@ const META_FILE = path.join(HERMES_DIR, 'foreman-hermes.json');
 
 export const HERMES_INSTALL_URL = 'https://hermes-agent.nousresearch.com/install.sh';
 
+// Hermes talks to Gemini directly (provider: gemini), so this must be a real Gemini model id
+// — the same one the Router uses. Cheap + fast; bump to gemini-3.5-flash for a smarter chat.
+export const DEFAULT_HERMES_MODEL = 'gemini-3.1-flash-lite';
+
 export interface HermesMeta {
   home: string;
   port: number;
@@ -104,7 +108,7 @@ export async function setupHermes(opts: SetupOptions = {}): Promise<SetupResult>
   fs.mkdirSync(HERMES_HOME, { recursive: true });
 
   const port = opts.port ?? (await findFreePort());
-  const model = opts.model ?? 'gemini-2.5-flash';
+  const model = opts.model ?? DEFAULT_HERMES_MODEL;
   const baseUrl = `http://localhost:${port}`;
   const gemini = requireSecret('GEMINI_API_KEY'); // reuse FOREMAN's provisioned key
   const apiServerKey = optionalSecret('HERMES_API_KEY') ?? randomToken();
@@ -228,6 +232,23 @@ export function selectRemote(opts: { baseUrl: string; apiKey?: string }): {
 /** Turn the chat bridge off (foreman.yaml hermes.enabled = false). */
 export function disableHermes(): boolean {
   return setHermesConfig({ enabled: false });
+}
+
+/**
+ * Change the managed instance's default model (a real Gemini id — it calls Gemini directly).
+ * Writes the isolated home's config + meta. A running gateway must be restarted to pick it up
+ * (the caller handles that, since restart needs a beat for the port to free).
+ */
+export function setHermesModel(model: string): { ok: boolean; error?: string; model?: string } {
+  const m = (model ?? '').trim();
+  if (!m) return { ok: false, error: 'model required' };
+  const meta = readMeta();
+  if (!meta) return { ok: false, error: 'Managed Hermes is not set up yet.' };
+  const r = spawnSync('hermes', ['config', 'set', 'model.default', m], { env: hermesEnv(), encoding: 'utf8' });
+  if (r.status !== 0) return { ok: false, error: (r.stderr || 'hermes config set failed').trim() };
+  spawnSync('hermes', ['config', 'set', 'model.provider', 'gemini'], { env: hermesEnv(), encoding: 'utf8' });
+  fs.writeFileSync(META_FILE, JSON.stringify({ ...meta, model: m }, null, 2));
+  return { ok: true, model: m };
 }
 
 // ── async install (so the dashboard can kick it off without blocking) ──────────

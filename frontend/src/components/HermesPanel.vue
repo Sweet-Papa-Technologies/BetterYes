@@ -10,6 +10,9 @@ const status = ref<HermesStatus | null>(null);
 const busy = ref(false);
 const remoteUrl = ref('');
 const remoteKey = ref('');
+const modelInput = ref('');
+// Gemini ids Hermes can use directly (it bypasses LiteLLM). Lite = cheap/fast, flash = smarter.
+const MODEL_PRESETS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
 let poll: ReturnType<typeof setInterval> | null = null;
 
 const source = computed(() => status.value?.active.source ?? 'off');
@@ -18,6 +21,7 @@ async function load() {
   try {
     status.value = await api.hermes.status();
     if (status.value.active.source === 'remote') remoteUrl.value ||= status.value.active.baseUrl;
+    if (status.value.managed.setUp) modelInput.value ||= status.value.managed.model;
     // Poll while the background installer runs so the UI flips to "installed" on its own.
     if (status.value.installing && !poll) poll = setInterval(load, 2500);
     if (!status.value.installing && poll) { clearInterval(poll); poll = null; }
@@ -60,6 +64,11 @@ const install = () => run(() => api.hermes.install(), 'Installing Hermes in the 
 const start = () => run(() => api.hermes.start(), 'Hermes gateway started');
 const stop = () => run(() => api.hermes.stop(), 'Hermes gateway stopped');
 const useManaged = () => run(() => api.hermes.select({ source: 'managed' }), 'Chat now uses the managed instance');
+const setModel = () =>
+  run(async () => {
+    const r = await api.hermes.setModel(modelInput.value.trim());
+    return r;
+  }, 'Hermes model updated');
 const turnOff = () => run(() => api.hermes.select({ source: 'off' }), 'Chat bridge disabled');
 const saveRemote = () =>
   run(
@@ -120,7 +129,13 @@ onUnmounted(() => poll && clearInterval(poll));
 
       <template v-else>
         <div class="kv"><span class="text-2">Endpoint</span><span class="code-chip">{{ status.managed.baseUrl }}</span></div>
-        <div class="kv"><span class="text-2">Model</span><span class="code-chip">{{ status.managed.model }}</span></div>
+        <label class="lbl mono q-mt-sm">MODEL <span class="text-muted">(Gemini id — Hermes calls Gemini directly)</span></label>
+        <div class="row q-gutter-sm items-center">
+          <q-input v-model="modelInput" dense borderless class="fld col mono" list="hermes-models" placeholder="gemini-3.1-flash-lite" />
+          <datalist id="hermes-models"><option v-for="m in MODEL_PRESETS" :key="m" :value="m" /></datalist>
+          <q-btn unelevated no-caps class="save" :loading="busy" :disable="modelInput.trim() === status.managed.model" @click="setModel">Set model</q-btn>
+        </div>
+        <div class="text-muted hint q-mt-xs">Lite is cheap + fast; <span class="mono">gemini-3.5-flash</span> is smarter. Changing it restarts the gateway.</div>
         <div class="row q-gutter-sm q-mt-sm">
           <q-btn v-if="!status.managed.running" unelevated no-caps class="save" :loading="busy" @click="start">Start</q-btn>
           <q-btn v-else flat no-caps class="ghost" :loading="busy" @click="stop">Stop</q-btn>

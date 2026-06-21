@@ -25,6 +25,8 @@ import {
   isRunning,
   reachable,
   readMeta,
+  setHermesModel,
+  DEFAULT_HERMES_MODEL,
   HERMES_INSTALL_URL,
 } from '../src/hermes/setup.js';
 import { ModelClient } from '../src/models/index.js';
@@ -261,7 +263,7 @@ hermes
   .description('Set up an isolated Hermes Agent under ~/.foreman/hermes — never touches ~/.hermes.')
   .option('--install', 'install Hermes first if it is missing (runs the official installer)')
   .option('--port <n>', 'API server port (default: first free port from 8650)', (v) => parseInt(v, 10))
-  .option('--model <m>', 'default Gemini model for Hermes', 'gemini-2.5-flash')
+  .option('--model <m>', 'default Gemini model for Hermes', DEFAULT_HERMES_MODEL)
   .option('--no-register-mcp', 'do not register FOREMAN as an MCP server inside Hermes')
   .option('--no-enable', 'do not enable hermes in foreman.yaml')
   .option('--start', 'start the Hermes gateway after setup')
@@ -328,6 +330,25 @@ hermes
     console.log(`port:      ${meta.port} (${meta.baseUrl})`);
     console.log(`process:   ${running ? 'running' : 'stopped'}`);
     console.log(`reachable: ${live ? 'yes' : 'no'}`);
+    console.log(`model:     ${meta.model}`);
+  });
+
+hermes
+  .command('model <name>')
+  .description('Set the managed Hermes default model (a Gemini id, e.g. gemini-3.1-flash-lite).')
+  .action((name: string) => {
+    const r = setHermesModel(name);
+    if (!r.ok) {
+      console.error(r.error);
+      process.exit(1);
+    }
+    if (isRunning()) {
+      stopHermes();
+      startHermes();
+      console.log(`Hermes model → ${r.model} (gateway restarted).`);
+    } else {
+      console.log(`Hermes model → ${r.model}.`);
+    }
   });
 
 // ── mcp-server ──────────────────────────────────────────────────────────────--
