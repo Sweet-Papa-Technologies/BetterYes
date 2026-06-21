@@ -36,6 +36,9 @@ about — without re-introducing yes-fatigue on everything else.
 It's a personal, publishable take on the supervised-autonomy pattern: no enterprise plumbing,
 swappable models, a real human-in-the-loop, and clean one-command setup.
 
+> 📖 New here? [**docs/ABOUT.md**](docs/ABOUT.md) is the shareable overview — what it is, why it's
+> useful, a screenshot tour, how it's been used, and honest pros/cons.
+
 ## Highlights
 
 - 🛰️ **One board for N concurrent jobs** — phase, live log, files touched, token/cost burn, open questions; live over WebSocket.
