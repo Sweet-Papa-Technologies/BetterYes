@@ -18,6 +18,37 @@ export function isGitRepo(repoPath: string): boolean {
   return git(repoPath, ['rev-parse', '--is-inside-work-tree']).stdout.trim() === 'true';
 }
 
+// Inline identity so commits succeed even when the user has no global git user.name/email set.
+const FOREMAN_ID = ['-c', 'user.name=FOREMAN', '-c', 'user.email=foreman@localhost'];
+
+/** Does the repo have at least one commit (a valid HEAD to branch a worktree off)? */
+export function hasCommits(repoPath: string): boolean {
+  return git(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD']).ok;
+}
+
+/**
+ * Ensure HEAD points at a commit. A freshly `git init`'d repo (or any repo with no commits)
+ * has an *unborn* HEAD, and `git worktree add … HEAD` fails with "invalid reference: HEAD".
+ * We commit whatever's there (or an empty commit) so local-only / brand-new repos Just Work —
+ * no remote required.
+ */
+export function ensureInitialCommit(repoPath: string): void {
+  if (hasCommits(repoPath)) return;
+  git(repoPath, ['add', '-A']);
+  const c = git(repoPath, [...FOREMAN_ID, 'commit', '-m', 'Initial commit (FOREMAN)']);
+  if (!c.ok) git(repoPath, [...FOREMAN_ID, 'commit', '--allow-empty', '-m', 'Initial commit (FOREMAN)']);
+}
+
+/** `git init` a folder (creating it if missing) and give it an initial commit so it's usable. */
+export function initRepo(folderPath: string): { ok: boolean; error?: string } {
+  fs.mkdirSync(folderPath, { recursive: true });
+  let init = git(folderPath, ['init', '-b', 'main']);
+  if (!init.ok) init = git(folderPath, ['init']); // older git without -b
+  if (!init.ok) return { ok: false, error: init.stderr.trim() || 'git init failed' };
+  ensureInitialCommit(folderPath);
+  return { ok: true };
+}
+
 export interface WorktreeInfo {
   path: string;
   branch: string;
@@ -36,6 +67,8 @@ export function prepareWorktree(opts: {
   if (!isGitRepo(repoPath)) {
     throw new Error(`${repoPath} is not a git repository. FOREMAN runs each job in a worktree.`);
   }
+  // Local-only / freshly-init'd repos have no commit yet → give them one so HEAD is valid.
+  ensureInitialCommit(repoPath);
   const wtPath = path.join(WORKTREES_DIR, jobId);
   if (fs.existsSync(wtPath)) {
     return { path: wtPath, branch };

@@ -84,6 +84,8 @@ export interface CreateJobRequest {
   agentTeams?: boolean;
   directorModel?: string;
   routerModel?: string;
+  /** If the folder isn't a git repo, `git init` it (+ initial commit) before launching. */
+  initRepo?: boolean;
 }
 
 // ── Events (persisted per job + streamed over WS) ────────────────────────────
@@ -145,6 +147,34 @@ export interface ResolveEscalationRequest {
   answer?: string;
   /** Allow: also auto-allow matching gate holds (same job + tool + rule) for this session. */
   remember?: boolean;
+}
+
+// ── Chat: persistent Hermes conversations (PRD FR6) ──────────────────────────
+export interface ChatAttachment {
+  name: string;
+  type: string;
+  size: number;
+  /** Server path where the upload was saved (for inlining text content into the prompt). */
+  path?: string;
+}
+export interface ChatMessage {
+  id: number;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  attachments?: ChatAttachment[];
+  /** Tool calls the assistant made during this turn (names), surfaced in the UI. */
+  toolCalls?: string[];
+  createdAt: string;
+}
+export interface Conversation {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface ConversationSummary extends Conversation {
+  lastMessage?: string;
 }
 
 // ── Config surfaced to the dashboard (`GET /config`) ─────────────────────────

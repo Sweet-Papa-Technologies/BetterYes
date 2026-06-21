@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { Rocket, FolderSearch } from 'lucide-vue-next';
@@ -22,6 +22,24 @@ const showAdvanced = ref(false);
 const directorModel = ref('');
 const routerModel = ref('');
 
+// Detect whether the chosen path is a git repo; offer to init it if not (Feature 1B).
+const repoIsGit = ref<boolean | null>(null);
+const initRepo = ref(true);
+let checkTimer: ReturnType<typeof setTimeout> | undefined;
+watch(repoPath, (v) => {
+  clearTimeout(checkTimer);
+  repoIsGit.value = null;
+  const p = v.trim();
+  if (!p) return;
+  checkTimer = setTimeout(async () => {
+    try {
+      repoIsGit.value = (await api.fsList(p)).isGitRepo;
+    } catch {
+      repoIsGit.value = false; // not found / not a dir → it'd be created on launch
+    }
+  }, 400);
+});
+
 async function launch() {
   if (!brief.value.trim() || !repoPath.value.trim()) {
     $q.notify({ message: 'Repo path and brief are required', color: 'negative', position: 'top' });
@@ -36,6 +54,7 @@ async function launch() {
       profile: profile.value,
       requirePlanApproval: requirePlanApproval.value,
       agentTeams: agentTeams.value,
+      ...(repoIsGit.value === false && initRepo.value ? { initRepo: true } : {}),
       ...(directorModel.value.trim() ? { directorModel: directorModel.value.trim() } : {}),
       ...(routerModel.value.trim() ? { routerModel: routerModel.value.trim() } : {}),
     });
@@ -61,6 +80,10 @@ async function launch() {
           <q-btn unelevated no-caps class="browse" @click="showPicker = true">
             <FolderSearch :size="16" class="q-mr-xs" /> Browse
           </q-btn>
+        </div>
+        <div v-if="repoIsGit === false" class="init-note row items-center justify-between q-mt-xs">
+          <span class="text-2">Not a git repo — FOREMAN can initialize one here.</span>
+          <q-toggle v-model="initRepo" dense color="primary" label="Initialize git repo" />
         </div>
       </div>
 
@@ -133,4 +156,5 @@ async function launch() {
 .launch { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; padding: 10px; font-size: 15px; }
 .adv-toggle { background: none; border: none; color: var(--fg-text-2); cursor: pointer; font-size: 12px; padding: 0; }
 .browse { border: 1px solid var(--fg-border); border-radius: 4px; color: var(--fg-text-2); white-space: nowrap; }
+.init-note { background: var(--fg-surface); border: 1px solid var(--fg-border); border-radius: 4px; padding: 4px 10px; font-size: 12px; }
 </style>

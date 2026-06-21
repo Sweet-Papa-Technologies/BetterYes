@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
-import { Folder, FolderGit2, CornerLeftUp, Check } from 'lucide-vue-next';
-import { api, type DirListing } from '../lib/api';
+import { Folder, FolderGit2, CornerLeftUp, Check, FolderPlus, GitBranchPlus } from 'lucide-vue-next';
+import { api, ApiError, type DirListing } from '../lib/api';
 
 // Browses the DAEMON's filesystem (that's where jobs run) so you can pick a repo folder.
 const emit = defineEmits<{ (e: 'select', path: string): void; (e: 'close'): void }>();
@@ -11,6 +11,7 @@ const $q = useQuasar();
 const open = ref(true);
 const listing = ref<DirListing | null>(null);
 const loading = ref(false);
+const busy = ref(false);
 const manual = ref('');
 
 async function go(path?: string) {
@@ -27,6 +28,42 @@ async function go(path?: string) {
 function choose() {
   if (listing.value) emit('select', listing.value.path);
   open.value = false;
+}
+// Create a new subfolder in the current directory, then step into it.
+function newFolder() {
+  if (!listing.value) return;
+  $q.dialog({
+    title: 'New folder',
+    message: `Create inside ${listing.value.path}`,
+    prompt: { model: '', type: 'text', label: 'Folder name' },
+    cancel: true,
+    ok: { label: 'Create', color: 'amber', noCaps: true },
+  }).onOk(async (name: string) => {
+    if (!name?.trim()) return;
+    busy.value = true;
+    try {
+      const r = await api.fsMkdir(listing.value!.path, name.trim());
+      await go(r.path);
+    } catch (e) {
+      $q.notify({ message: e instanceof ApiError ? e.message : 'Could not create folder', color: 'negative', position: 'top' });
+    } finally {
+      busy.value = false;
+    }
+  });
+}
+// Turn the current (non-repo) folder into a git repo so it can be used.
+async function initHere() {
+  if (!listing.value) return;
+  busy.value = true;
+  try {
+    await api.fsInitRepo(listing.value.path);
+    $q.notify({ message: 'Initialized git repo', color: 'positive', position: 'top' });
+    await go(listing.value.path);
+  } catch (e) {
+    $q.notify({ message: e instanceof ApiError ? e.message : 'Could not init repo', color: 'negative', position: 'top' });
+  } finally {
+    busy.value = false;
+  }
 }
 onMounted(() => go('~'));
 </script>
@@ -53,6 +90,15 @@ onMounted(() => go('~'));
         <q-btn flat dense no-caps size="sm" class="goto" @click="go(manual)">Go</q-btn>
       </div>
 
+      <div class="row items-center q-gutter-xs q-mt-xs">
+        <q-btn flat dense no-caps size="sm" class="action" :loading="busy" :disable="!listing" @click="newFolder">
+          <FolderPlus :size="14" class="q-mr-xs" /> New folder
+        </q-btn>
+        <q-btn v-if="listing && !listing.isGitRepo" flat dense no-caps size="sm" class="action" :loading="busy" @click="initHere">
+          <GitBranchPlus :size="14" class="q-mr-xs" /> Make git repo here
+        </q-btn>
+      </div>
+
       <div class="list q-mt-sm">
         <div v-if="loading" class="text-muted q-pa-md">Loading…</div>
         <div v-else-if="!listing?.entries.length" class="text-muted q-pa-md">No subfolders here.</div>
@@ -71,10 +117,12 @@ onMounted(() => go('~'));
       </div>
 
       <div class="row items-center justify-between q-mt-md foot">
-        <span class="mono text-muted cur ellipsis">{{ listing?.path }}</span>
+        <span class="mono cur ellipsis" :class="listing?.isGitRepo ? 'text-muted' : 'text-accent'">
+          {{ listing?.path }}<span v-if="listing && !listing.isGitRepo"> · not a git repo (will init on launch)</span>
+        </span>
         <div class="row q-gutter-sm">
           <q-btn flat no-caps @click="open = false">Cancel</q-btn>
-          <q-btn unelevated no-caps class="select" :disable="!listing?.isGitRepo" @click="choose">
+          <q-btn unelevated no-caps class="select" :disable="!listing" @click="choose">
             <Check :size="15" class="q-mr-xs" /> Use this folder
           </q-btn>
         </div>
@@ -88,6 +136,8 @@ onMounted(() => go('~'));
 .amber { color: var(--fg-accent); }
 .path-input { background: var(--fg-bg); border: 1px solid var(--fg-border); border-radius: 4px; padding: 2px 8px; }
 .up, .goto { border: 1px solid var(--fg-border); border-radius: 4px; color: var(--fg-text-2); }
+.action { border: 1px solid var(--fg-border); border-radius: 4px; color: var(--fg-text-2); }
+.text-accent { color: var(--fg-accent); }
 .list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--fg-border); border-radius: 4px; }
 .entry { padding: 8px 10px; border-bottom: 1px solid var(--fg-border); cursor: pointer; font-size: 13px; }
 .entry:last-child { border-bottom: none; }

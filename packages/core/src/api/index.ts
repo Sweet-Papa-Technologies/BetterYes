@@ -8,19 +8,28 @@ import fstatic from '@fastify/static';
 import type { CreateJobRequest, PublicConfig, WsMessage } from '@foreman/shared';
 import { type ForemanConfig, expandPath, loadConfig } from '../config/index.js';
 import { requireSecret, optionalSecret } from '../secrets/index.js';
-import { isGitRepo, mergeWorktree } from '../coder/worktree.js';
+import { isGitRepo, mergeWorktree, initRepo } from '../coder/worktree.js';
 import {
+  appendChatMessage,
   appendEvent,
+  createConversation,
   createEscalation,
   createJob,
+  deleteConversation,
+  getConversation,
   getEscalation,
   getJob,
+  listChatMessages,
+  listConversations,
   listEscalations,
   listEvents,
   listJobs,
+  renameConversation,
   resolveEscalation,
   updateJob,
 } from '../db/index.js';
+import type { ChatAttachment, ChatMessage } from '@foreman/shared';
+import { UPLOADS_DIR } from '../paths.js';
 import { readRules, writeRules, writeRulesParsed } from '../rules/store.js';
 import { jobManager } from '../orchestrator/index.js';
 import { sessionAllow } from '../gate/sessionAllow.js';
@@ -137,11 +146,17 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     }
     // Expand ~ / $VARS / relative, then validate it's a git repo before launching.
     const repoPath = expandPath(body.repoPath);
-    if (!fs.existsSync(repoPath)) {
+    if (!body.initRepo && !fs.existsSync(repoPath)) {
       return reply.code(400).send({ error: `Path not found: ${repoPath}` });
     }
     if (!isGitRepo(repoPath)) {
-      return reply.code(400).send({ error: `Not a git repo: ${repoPath} (run \`git init\` there first)` });
+      // Initialize it on the operator's say-so (a new/empty folder is fine — FOREMAN commits it).
+      if (body.initRepo) {
+        const r = initRepo(repoPath);
+        if (!r.ok) return reply.code(400).send({ error: `Could not init git repo: ${r.error}` });
+      } else {
+        return reply.code(400).send({ error: `Not a git repo: ${repoPath} (enable "initialize git repo", or run \`git init\` there)` });
+      }
     }
     const job = createJob({
       ...body,
@@ -182,6 +197,31 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     } catch (e) {
       return reply.code(400).send({ error: (e as Error).message });
     }
+  });
+
+  // Create a new folder under `path` (for the folder picker's "New folder").
+  app.post('/api/fs/mkdir', async (req, reply) => {
+    const b = (req.body as { path?: string; name?: string }) ?? {};
+    if (!b.path || !b.name) return reply.code(400).send({ error: 'path and name required' });
+    const name = b.name.trim().replace(/[/\\]/g, ''); // single segment only
+    if (!name) return reply.code(400).send({ error: 'invalid folder name' });
+    try {
+      const full = path.join(expandPath(b.path), name);
+      fs.mkdirSync(full, { recursive: true });
+      return { path: full, isGitRepo: fs.existsSync(path.join(full, '.git')) };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  // `git init` a folder + initial commit so a non-repo folder becomes usable.
+  app.post('/api/fs/init-repo', async (req, reply) => {
+    const b = (req.body as { path?: string }) ?? {};
+    if (!b.path) return reply.code(400).send({ error: 'path required' });
+    const dir = expandPath(b.path);
+    const r = initRepo(dir);
+    if (!r.ok) return reply.code(400).send({ error: r.error });
+    return { path: dir, isGitRepo: true };
   });
 
   // Controls (PRD U3/U6) ──────────────────────────────────────────────────────
@@ -345,8 +385,89 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
       return reply;
     }
     try {
-      await hermes.streamChat(messages ?? [], (delta) => sse({ type: 'delta', delta }));
+      await hermes.streamChat(messages ?? [], { onDelta: (delta) => sse({ type: 'delta', delta }) });
       sse({ type: 'done' });
+    } catch (err) {
+      sse({ type: 'error', error: (err as Error).message });
+    }
+    reply.raw.end();
+    return reply;
+  });
+
+  // ── Persistent chat: conversations + messages (PRD FR6) ─────────────────────
+  app.get('/api/conversations', async () => listConversations());
+  app.post('/api/conversations', async (req) => {
+    const { title } = (req.body as { title?: string }) ?? {};
+    return createConversation(title?.trim() || 'New chat');
+  });
+  app.get('/api/conversations/:id', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const conversation = getConversation(id);
+    if (!conversation) return reply.code(404).send({ error: 'not found' });
+    return { conversation, messages: listChatMessages(id) };
+  });
+  app.patch('/api/conversations/:id', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!getConversation(id)) return reply.code(404).send({ error: 'not found' });
+    const { title } = (req.body as { title?: string }) ?? {};
+    if (title?.trim()) renameConversation(id, title.trim());
+    return getConversation(id);
+  });
+  app.delete('/api/conversations/:id', async (req) => {
+    deleteConversation((req.params as { id: string }).id);
+    return { ok: true };
+  });
+
+  // Store an uploaded attachment (base64 JSON — no multipart dep). Capped at 5 MB.
+  app.post('/api/uploads', async (req, reply) => {
+    const b = (req.body as { conversationId?: string; name?: string; type?: string; dataBase64?: string }) ?? {};
+    if (!b.name || !b.dataBase64) return reply.code(400).send({ error: 'name and dataBase64 required' });
+    const buf = Buffer.from(b.dataBase64, 'base64');
+    if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'file too large (max 5 MB)' });
+    const dir = path.join(UPLOADS_DIR, (b.conversationId || 'misc').replace(/[/\\]/g, '_'));
+    fs.mkdirSync(dir, { recursive: true });
+    const full = path.join(dir, `${Date.now()}-${b.name.replace(/[/\\]/g, '_')}`);
+    fs.writeFileSync(full, buf);
+    const att: ChatAttachment = { name: b.name, type: b.type || 'application/octet-stream', size: buf.length, path: full };
+    return att;
+  });
+
+  // Send a message + stream Hermes's reply (SSE), persisting both ends.
+  app.post('/api/conversations/:id/messages', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const conv = getConversation(id);
+    if (!conv) return reply.code(404).send({ error: 'not found' });
+    const body = (req.body as { content?: string; attachments?: ChatAttachment[] }) ?? {};
+    const content = (body.content ?? '').trim();
+    const attachments = body.attachments ?? [];
+    if (!content && !attachments.length) return reply.code(400).send({ error: 'empty message' });
+
+    const userMsg = appendChatMessage({ conversationId: id, role: 'user', content, attachments });
+    // Auto-title an untouched conversation from its first user message.
+    if (conv.title === 'New chat' && listChatMessages(id).filter((m) => m.role === 'user').length === 1) {
+      renameConversation(id, (content || attachments[0]?.name || 'New chat').slice(0, 48));
+    }
+
+    reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    const sse = (o: unknown) => reply.raw.write(`data: ${JSON.stringify(o)}\n\n`);
+    sse({ type: 'user', message: userMsg });
+
+    const hermes = freshHermes();
+    if (!hermes.enabled) {
+      sse({ type: 'disabled' });
+      reply.raw.end();
+      return reply;
+    }
+    const history = listChatMessages(id).map(messageForHermes);
+    let acc = '';
+    const tools: string[] = [];
+    try {
+      await hermes.streamChat(history, {
+        onDelta: (d) => { acc += d; sse({ type: 'delta', delta: d }); },
+        onTool: (name) => { tools.push(name); sse({ type: 'tool', name }); },
+      });
+      const assistant = appendChatMessage({ conversationId: id, role: 'assistant', content: acc, toolCalls: tools });
+      sse({ type: 'done', message: assistant });
     } catch (err) {
       sse({ type: 'error', error: (err as Error).message });
     }
@@ -538,6 +659,26 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
   }
 
   return app;
+}
+
+// Inline text-file attachments into the message content sent to Hermes; reference others by name.
+const TEXT_TYPE_RE = /^(text\/|application\/(json|xml|javascript|x-yaml|x-sh)|application\/.*\+(json|xml))/i;
+const TEXT_EXT_RE = /\.(txt|md|markdown|json|ya?ml|csv|js|ts|tsx|jsx|py|rb|go|rs|java|c|cc|cpp|h|hpp|sh|html|css|scss|toml|ini|cfg|env|sql|vue|log)$/i;
+function messageForHermes(m: ChatMessage): { role: string; content: string } {
+  let content = m.content;
+  for (const a of m.attachments ?? []) {
+    const textual = TEXT_TYPE_RE.test(a.type) || TEXT_EXT_RE.test(a.name);
+    if (a.path && textual) {
+      try {
+        content += `\n\n[Attachment: ${a.name}]\n${fs.readFileSync(a.path, 'utf8').slice(0, 20_000)}`;
+      } catch {
+        content += `\n[Attachment: ${a.name} — unreadable]`;
+      }
+    } else {
+      content += `\n[Attachment: ${a.name} (${a.type}, ${a.size} bytes)]`;
+    }
+  }
+  return { role: m.role, content };
 }
 
 function extractToken(req: FastifyRequest): string | null {

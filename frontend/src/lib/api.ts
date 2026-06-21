@@ -1,5 +1,9 @@
 // Typed client for the FOREMAN Core API (REST + WebSocket), sharing DTOs with the daemon.
 import type {
+  ChatAttachment,
+  ChatMessage,
+  Conversation,
+  ConversationSummary,
   CreateJobRequest,
   Escalation,
   Job,
@@ -136,6 +140,54 @@ export interface HermesStatus {
   };
 }
 
+export interface ChatStreamHandlers {
+  onUser?: (m: ChatMessage) => void;
+  onDelta?: (t: string) => void;
+  onTool?: (name: string) => void;
+  onDone?: (m: ChatMessage) => void;
+  onDisabled?: () => void;
+  onError?: (e: string) => void;
+}
+
+/** Send a message to a conversation and stream the persisted reply (SSE). */
+export async function sendConversationMessage(
+  conversationId: string,
+  body: { content: string; attachments?: ChatAttachment[] },
+  h: ChatStreamHandlers,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(body),
+  });
+  if (!res.body) return h.onError?.('no stream');
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      try {
+        const e = JSON.parse(t.slice(5).trim());
+        if (e.type === 'user') h.onUser?.(e.message);
+        else if (e.type === 'delta') h.onDelta?.(e.delta);
+        else if (e.type === 'tool') h.onTool?.(e.name);
+        else if (e.type === 'done') h.onDone?.(e.message);
+        else if (e.type === 'disabled') h.onDisabled?.();
+        else if (e.type === 'error') h.onError?.(e.error);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 export interface DirEntry {
   name: string;
   path: string;
@@ -152,6 +204,10 @@ export const api = {
   config: () => req<PublicConfig>('/api/config'),
   fsList: (path?: string) =>
     req<DirListing>(`/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  fsMkdir: (path: string, name: string) =>
+    req<{ path: string; isGitRepo: boolean }>('/api/fs/mkdir', { method: 'POST', body: JSON.stringify({ path, name }) }),
+  fsInitRepo: (path: string) =>
+    req<{ path: string; isGitRepo: boolean }>('/api/fs/init-repo', { method: 'POST', body: JSON.stringify({ path }) }),
   listJobs: () => req<Job[]>('/api/jobs'),
   getJob: (id: string) => req<{ job: Job; events: JobEvent[] }>(`/api/jobs/${id}`),
   createJob: (body: CreateJobRequest) =>
@@ -196,6 +252,17 @@ export const api = {
         body: JSON.stringify({ model }),
       }),
   },
+  conversations: {
+    list: () => req<ConversationSummary[]>('/api/conversations'),
+    create: (title?: string) =>
+      req<Conversation>('/api/conversations', { method: 'POST', body: JSON.stringify({ title }) }),
+    get: (id: string) => req<{ conversation: Conversation; messages: ChatMessage[] }>(`/api/conversations/${id}`),
+    rename: (id: string, title: string) =>
+      req<Conversation>(`/api/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+    remove: (id: string) => req<{ ok: boolean }>(`/api/conversations/${id}`, { method: 'DELETE' }),
+  },
+  upload: (body: { conversationId?: string; name: string; type: string; dataBase64: string }) =>
+    req<ChatAttachment>('/api/uploads', { method: 'POST', body: JSON.stringify(body) }),
   getRules: () => req<{ text: string; parsed: RulesFile; path: string }>('/api/rules'),
   putRules: (parsed: RulesFile) =>
     req<{ ok: boolean }>('/api/rules', { method: 'PUT', body: JSON.stringify({ parsed }) }),
