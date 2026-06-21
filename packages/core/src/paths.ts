@@ -9,6 +9,7 @@ export const FOREMAN_HOME =
 export const DB_PATH = path.join(FOREMAN_HOME, 'foreman.db');
 export const JOBS_DIR = path.join(FOREMAN_HOME, 'jobs');
 export const WORKTREES_DIR = path.join(FOREMAN_HOME, 'worktrees');
+export const UPLOADS_DIR = path.join(FOREMAN_HOME, 'uploads');
 
 /** Per-job state directory: ~/.foreman/jobs/<id>/ */
 export function jobDir(jobId: string): string {
@@ -17,7 +18,7 @@ export function jobDir(jobId: string): string {
 
 /** Create the FOREMAN home tree if missing. Idempotent. */
 export function ensureForemanHome(): void {
-  for (const dir of [FOREMAN_HOME, JOBS_DIR, WORKTREES_DIR]) {
+  for (const dir of [FOREMAN_HOME, JOBS_DIR, WORKTREES_DIR, UPLOADS_DIR]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }

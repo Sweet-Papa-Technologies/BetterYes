@@ -46,10 +46,14 @@ export class HermesClient {
   }
 
   /**
-   * Stream a chat completion from Hermes, invoking `onDelta` with each text chunk. Returns
-   * when the stream ends. Throws if Hermes is unreachable so the caller can fall back.
+   * Stream a chat completion from Hermes. `onDelta` gets each text chunk; `onTool` (optional)
+   * gets the name of each tool the model invokes mid-turn, when Hermes surfaces tool_calls in
+   * the OpenAI-style stream. Returns when the stream ends; throws if Hermes is unreachable.
    */
-  async streamChat(messages: { role: string; content: string }[], onDelta: (t: string) => void): Promise<void> {
+  async streamChat(
+    messages: { role: string; content: string }[],
+    handlers: { onDelta: (t: string) => void; onTool?: (name: string) => void },
+  ): Promise<void> {
     if (!this.enabled) throw new Error('hermes disabled');
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -60,6 +64,7 @@ export class HermesClient {
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
+    const seenTools = new Set<string>();
     let buf = '';
     for (;;) {
       const { value, done } = await reader.read();
@@ -73,8 +78,16 @@ export class HermesClient {
         const data = t.slice(5).trim();
         if (data === '[DONE]') return;
         try {
-          const delta = JSON.parse(data).choices?.[0]?.delta?.content;
-          if (delta) onDelta(delta);
+          const delta = JSON.parse(data).choices?.[0]?.delta;
+          if (delta?.content) handlers.onDelta(delta.content);
+          // OpenAI-style tool_calls (name arrives in the first chunk of each call).
+          for (const tc of delta?.tool_calls ?? []) {
+            const name = tc?.function?.name;
+            if (name && !seenTools.has(name)) {
+              seenTools.add(name);
+              handlers.onTool?.(name);
+            }
+          }
         } catch {
           /* keep-alive or non-JSON line */
         }

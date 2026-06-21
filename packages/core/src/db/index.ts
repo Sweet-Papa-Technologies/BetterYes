@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import type {
+  ChatAttachment,
+  ChatMessage,
+  Conversation,
+  ConversationSummary,
   CreateJobRequest,
   Escalation,
   Job,
@@ -87,6 +91,24 @@ function migrate(d: Database.Database): void {
       auth      TEXT NOT NULL,
       createdAt TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS conversations (
+      id        TEXT PRIMARY KEY,
+      title     TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversationId TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      role           TEXT NOT NULL,
+      content        TEXT NOT NULL,
+      attachments    TEXT,
+      toolCalls      TEXT,
+      createdAt      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_messages(conversationId, id);
   `);
 
   // Additive migrations for DBs created by earlier milestones (CREATE TABLE IF NOT EXISTS
@@ -443,6 +465,99 @@ export function listEscalations(state?: 'open' | 'resolved' | 'timed_out'): Esca
       : getDb().prepare('SELECT * FROM escalations ORDER BY createdAt DESC').all()
   ) as Record<string, unknown>[];
   return rows.map(rowToEscalation);
+}
+
+// ── Chat: conversations + messages (persistent Hermes) ───────────────────────
+export function createConversation(title = 'New chat'): Conversation {
+  const d = getDb();
+  const n = (d.prepare('SELECT COUNT(*) AS n FROM conversations').get() as { n: number }).n;
+  const id = `CNV-${1000 + n}`;
+  const ts = now();
+  d.prepare('INSERT INTO conversations (id, title, createdAt, updatedAt) VALUES (?, ?, ?, ?)').run(id, title, ts, ts);
+  return { id, title, createdAt: ts, updatedAt: ts };
+}
+
+export function getConversation(id: string): Conversation | null {
+  const r = getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  return r ? { id: r.id as string, title: r.title as string, createdAt: r.createdAt as string, updatedAt: r.updatedAt as string } : null;
+}
+
+/** Conversations newest-first, each with a short preview of its latest message. */
+export function listConversations(): ConversationSummary[] {
+  const rows = getDb().prepare('SELECT * FROM conversations ORDER BY updatedAt DESC').all() as Record<string, unknown>[];
+  return rows.map((r) => {
+    const last = getDb()
+      .prepare('SELECT content FROM chat_messages WHERE conversationId = ? ORDER BY id DESC LIMIT 1')
+      .get(r.id) as { content?: string } | undefined;
+    return {
+      id: r.id as string,
+      title: r.title as string,
+      createdAt: r.createdAt as string,
+      updatedAt: r.updatedAt as string,
+      ...(last?.content ? { lastMessage: last.content.slice(0, 120) } : {}),
+    };
+  });
+}
+
+export function renameConversation(id: string, title: string): void {
+  getDb().prepare('UPDATE conversations SET title = ?, updatedAt = ? WHERE id = ?').run(title, now(), id);
+}
+
+export function touchConversation(id: string): void {
+  getDb().prepare('UPDATE conversations SET updatedAt = ? WHERE id = ?').run(now(), id);
+}
+
+export function deleteConversation(id: string): void {
+  getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id);
+}
+
+function rowToChatMessage(r: Record<string, unknown>): ChatMessage {
+  return {
+    id: r.id as number,
+    conversationId: r.conversationId as string,
+    role: r.role as 'user' | 'assistant',
+    content: r.content as string,
+    ...(r.attachments ? { attachments: JSON.parse(r.attachments as string) as ChatAttachment[] } : {}),
+    ...(r.toolCalls ? { toolCalls: JSON.parse(r.toolCalls as string) as string[] } : {}),
+    createdAt: r.createdAt as string,
+  };
+}
+
+export function listChatMessages(conversationId: string): ChatMessage[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM chat_messages WHERE conversationId = ? ORDER BY id ASC')
+    .all(conversationId) as Record<string, unknown>[];
+  return rows.map(rowToChatMessage);
+}
+
+export function appendChatMessage(p: {
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  attachments?: ChatAttachment[];
+  toolCalls?: string[];
+}): ChatMessage {
+  const ts = now();
+  const info = getDb()
+    .prepare('INSERT INTO chat_messages (conversationId, role, content, attachments, toolCalls, createdAt) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(
+      p.conversationId,
+      p.role,
+      p.content,
+      p.attachments?.length ? JSON.stringify(p.attachments) : null,
+      p.toolCalls?.length ? JSON.stringify(p.toolCalls) : null,
+      ts,
+    );
+  touchConversation(p.conversationId);
+  return {
+    id: Number(info.lastInsertRowid),
+    conversationId: p.conversationId,
+    role: p.role,
+    content: p.content,
+    ...(p.attachments?.length ? { attachments: p.attachments } : {}),
+    ...(p.toolCalls?.length ? { toolCalls: p.toolCalls } : {}),
+    createdAt: ts,
+  };
 }
 
 export function listEvents(jobId: string, limit = 500): JobEvent[] {
