@@ -64,7 +64,20 @@ swappable models, a real human-in-the-loop, and clean one-command setup.
 
 More: the [screenshot tour in **docs/ABOUT.md**](docs/ABOUT.md) (folder picker, shortcuts, escalation sheet, …).
 
-## Quickstart (~15 min)
+## Quickstart
+
+### Fastest: one-liner installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sweet-Papa-Technologies/BetterYes/main/install.sh | bash
+```
+
+Clones the repo, installs deps, builds the dashboard, installs Claude Code + the LiteLLM proxy,
+runs a preflight, and prints the two human steps left: **log into Claude** (`claude`) and **run
+`foreman init`** (paste a free Gemini key). macOS or Linux (Windows: use WSL2). Prefer to do it by
+hand? The manual path is below.
+
+### Manual (~15 min)
 
 **You need four things** (two are accounts, both have free paths):
 
