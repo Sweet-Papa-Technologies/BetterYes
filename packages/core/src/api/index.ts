@@ -55,7 +55,7 @@ import { bus } from '../bus.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('api');
-const VERSION = '0.1.0';
+const VERSION = '0.1.0-beta.1';
 
 /** Locate the built dashboard bundle (PWA build preferred, then SPA), if present. */
 function dashboardDist(): string | null {

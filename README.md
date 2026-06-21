@@ -41,12 +41,14 @@ swappable models, a real human-in-the-loop, and clean one-command setup.
 
 ## Highlights
 
-- 🛰️ **One board for N concurrent jobs** — phase, live log, files touched, token/cost burn, open questions; live over WebSocket.
+- 🛰️ **One board for N concurrent jobs** — phase, live log, files touched, token/cost burn, open questions; live over WebSocket, with search + status filters.
 - 🧠 **Supervised, not babysat** — a stateless **Director** plans/reviews, a cheap **Router** classifies every turn, an amnesia **ledger** + circuit breaker stop rabbit-holes.
-- 🚦 **Granular rule gate** — a PreToolUse hook that `allow`/`deny`/`escalate`s per tool + argument pattern (`rules.yaml`), editable live in the dashboard, hot-reloaded, with an append-only audit.
-- ✋ **Real human-in-the-loop** — a gated tool call (or a plan-approval) **pauses the exact call** and waits for you; answer **Allow / Deny / "do this instead"** from the dashboard or the chat, with a Web Push to your phone.
-- 📱 **Phone-first PWA** — installable, dark "mission-control" UI; the escalation surface is a two-tap bottom sheet.
-- 💬 **Talk to Hermes** — an optional conversational brain ([Hermes Agent](https://github.com/NousResearch/hermes-agent)) that streams into the chat panel *and* can command FOREMAN back via MCP (`dispatch_job` / `status` / `redirect`). `foreman hermes setup` stands up an isolated instance for you.
+- 🚦 **Granular rule gate** — a PreToolUse hook that `allow`/`deny`/`escalate`s per tool + argument pattern (`rules.yaml`), editable live, hot-reloaded, with an append-only audit.
+- ✋ **Real human-in-the-loop** — a gated tool call (or plan-approval) **pauses the exact call** and waits for you; answer **Allow / Deny / "do this instead"** from the dashboard or chat, with a Web Push to your phone. "Always allow this for the session" stops the re-asking.
+- 🔁 **Retry & merge** — re-run a finished job from its brief, or merge its worktree branch back into your repo and clean up (fails closed on conflict).
+- 📁 **Any local folder** — works with local-only repos (no remote needed) and brand-new/empty folders; `git init` one on the fly from the picker.
+- 📱 **Phone-first + remote access** — installable PWA; reach it **from anywhere over HTTPS** with `foreman tunnel` (private [Tailscale](https://tailscale.com) mesh, scan a QR to sign in).
+- 💬 **Persistent chat with Hermes** — multi-conversation, searchable, with file attachments; the optional [Hermes Agent](https://github.com/NousResearch/hermes-agent) brain answers questions *and* commands FOREMAN back via MCP (`dispatch_job` / `status` / `redirect`), all managed from Settings.
 - 🔧 **Swappable models, BYO everything** — Director/Router are config (default Gemini via a LiteLLM proxy); Coder is your Claude Code. No hardcoded paths, models, or tokens.
 - 🔒 **Secrets done right** — macOS Keychain primary, `.env` / env-var fallback; never logged, redacted in audit.
 
@@ -56,9 +58,11 @@ swappable models, a real human-in-the-loop, and clean one-command setup.
 |---|---|
 | ![Board](docs/screenshots/board.png) | ![Job detail](docs/screenshots/job-detail.png) |
 
-| Rules editor | Escalation (phone) |
+| Persistent chat (Hermes) | Settings + Hermes panel |
 |---|---|
-| ![Rules](docs/screenshots/rules.png) | <img src="docs/screenshots/escalation-mobile.png" width="280" /> |
+| ![Chat](docs/screenshots/chat.png) | ![Settings](docs/screenshots/settings-hermes.png) |
+
+More: the [screenshot tour in **docs/ABOUT.md**](docs/ABOUT.md) (folder picker, shortcuts, escalation sheet, …).
 
 ## Quickstart (~15 min)
 
@@ -148,8 +152,9 @@ When a job finishes (`done` / `failed` / `killed`), the header swaps to two acti
 
 The dashboard's chat panel is powered by a [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 that can answer questions and **act on FOREMAN** (dispatch / redirect / query jobs) over MCP.
-Manage it entirely from **Settings → HERMES (CHAT BRAIN)** — changes take effect immediately,
-no daemon restart:
+Conversations are **persistent** — start new ones, switch, search, and load them back — and you
+can **attach files** (text files are read into the prompt). Manage the brain entirely from
+**Settings → HERMES (CHAT BRAIN)** — changes take effect immediately, no daemon restart:
 
 - **Managed (local)** — one click provisions an **isolated** instance under `~/.foreman/hermes`
   (its own home + port, so it never touches a pre-existing `~/.hermes`), registers FOREMAN's
@@ -214,12 +219,22 @@ foreman secret set|get|list|delete       Keychain / .env secret management
 - Rule-gate fail-safe: on any error it escalates/denies per profile — **no path defaults to allow**. Protected-path checks resolve symlinks.
 - Secrets are never logged; the logger and audit redact secret-pattern values. Each job is isolated in its own git worktree.
 
-## Project status & roadmap
+## Project status
 
-All five milestones (**M1 core loop → M5 packaging**) are complete and verified end-to-end.
-**Known limitations:** the gate enforces literal declared patterns, not semantic intent
-(write rules to target outcomes); real-device Web Push delivery is built to spec but
-unverified without a device. Jobs resume across daemon restarts.
+**Beta 1** (`v0.1.0-beta.1`). The full loop works end-to-end and has supervised 24+ real jobs:
+the M1–M5 core (supervision loop, rule gate, dashboard/PWA, Hermes bridge, packaging) plus
+retry/merge, persistent multi-conversation chat with attachments, full Hermes management,
+any-local-folder support, and phone-from-anywhere remote access via `foreman tunnel`.
+
+**Honest known limitations:**
+- Setup has real prerequisites (Node, Claude Code, a Gemini key, a Python LiteLLM proxy). There's
+  a no-GCP "paste a free key" path and a `doctor` preflight, but it's not yet one-click.
+- **Windows is WSL-first and lightly tested** (CI runs typecheck + the gate smoke on Win/Linux/mac).
+- The gate enforces literal declared patterns, not semantic intent — write rules to outcomes.
+- Hermes runs its MCP tools server-side, so chat shows a tool's *result* but not always a per-tool status.
+- The cost figure is an API-equivalent **estimate** (on a Claude subscription it's rate-limit budget, not dollars); real-device Web Push is built to spec but lightly verified.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the full beta-1 feature list.
 
 ## Contributing
 

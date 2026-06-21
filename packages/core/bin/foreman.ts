@@ -36,7 +36,7 @@ import { jobManager } from '../src/orchestrator/index.js';
 import { bus } from '../src/bus.js';
 
 const program = new Command();
-program.name('foreman').description('FOREMAN — mission control for AI coding jobs').version('0.1.0');
+program.name('foreman').description('FOREMAN — mission control for AI coding jobs').version('0.1.0-beta.1');
 
 // ── serve ─────────────────────────────────────────────────────────────────────
 program
