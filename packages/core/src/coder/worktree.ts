@@ -75,3 +75,80 @@ export function changedFiles(wtPath: string): string[] {
 export function countChangedFiles(wtPath: string): number {
   return changedFiles(wtPath).length;
 }
+
+export interface MergeResult {
+  ok: boolean;
+  error?: string;
+  conflict?: boolean;
+  baseBranch?: string;
+  committed?: boolean;
+  cleanedUp?: boolean;
+  nothingToMerge?: boolean;
+}
+
+/**
+ * Merge a job's worktree branch back into the repo's checked-out branch, then (optionally)
+ * remove the worktree and delete the branch. Any uncommitted work in the worktree is committed
+ * first (Claude Code often leaves changes uncommitted). Fails closed: a dirty target repo or a
+ * merge conflict aborts cleanly without touching the worktree, so nothing is lost.
+ */
+export function mergeWorktree(opts: {
+  repoPath: string;
+  wtPath: string;
+  branch: string;
+  commitMessage?: string;
+  cleanup?: boolean;
+}): MergeResult {
+  const { repoPath, wtPath, branch } = opts;
+  if (!fs.existsSync(wtPath)) return { ok: false, error: 'Worktree no longer exists.' };
+
+  // 1. Commit pending work on the job branch so there's something to merge.
+  let committed = false;
+  if (changedFiles(wtPath).length > 0) {
+    const add = git(wtPath, ['add', '-A']);
+    if (!add.ok) return { ok: false, error: `git add failed: ${add.stderr.trim()}` };
+    const msg = opts.commitMessage?.trim() || `FOREMAN: merge work from ${branch}`;
+    const commit = git(wtPath, ['commit', '-m', msg]);
+    if (!commit.ok) return { ok: false, error: `git commit failed: ${commit.stderr.trim()}` };
+    committed = true;
+  }
+
+  // 2. Refuse to merge over uncommitted work in the target checkout.
+  const dirty = git(repoPath, ['status', '--porcelain']).stdout.trim();
+  if (dirty) {
+    return {
+      ok: false,
+      committed,
+      error: `Target repo has uncommitted changes — commit or stash them first, then merge.`,
+    };
+  }
+
+  const baseBranch = git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
+
+  // 3. Already merged / no new commits? Treat as a clean no-op (still allow cleanup).
+  const ahead = git(repoPath, ['rev-list', '--count', `HEAD..${branch}`]).stdout.trim();
+  const nothingToMerge = ahead === '0';
+
+  if (!nothingToMerge) {
+    const merge = git(repoPath, ['merge', '--no-ff', branch, '-m', `Merge ${branch} (FOREMAN job)`]);
+    if (!merge.ok) {
+      git(repoPath, ['merge', '--abort']); // leave the repo exactly as it was
+      return {
+        ok: false,
+        committed,
+        baseBranch,
+        conflict: true,
+        error: `Merge conflict with ${baseBranch} — aborted, nothing changed. Resolve it manually.`,
+      };
+    }
+  }
+
+  // 4. Optional cleanup: remove the worktree, then delete its now-merged branch.
+  let cleanedUp = false;
+  if (opts.cleanup) {
+    removeWorktree(repoPath, wtPath);
+    git(repoPath, ['branch', '-D', branch]); // safe: branch is merged (or empty)
+    cleanedUp = true;
+  }
+  return { ok: true, committed, baseBranch, cleanedUp, nothingToMerge };
+}

@@ -343,7 +343,10 @@ export class JobRunner {
   private finishKilled(): void {
     this.logLine('warn', 'Killed by operator');
     this.setState('killed', 'Killed by operator');
-    if (this.job.worktreePath) removeWorktree(this.job.repoPath, this.job.worktreePath);
+    if (this.job.worktreePath) {
+      removeWorktree(this.job.repoPath, this.job.worktreePath);
+      this.job = updateJob(this.job.id, { worktreePath: null }); // it's gone — reflect that
+    }
   }
 
   private applyBurn(turn: CoderTurnResult): void {

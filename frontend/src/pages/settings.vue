@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { getToken, setToken } from '../lib/api';
 import { enablePush, pushSupported } from '../lib/push';
 import { useJobsStore } from '../stores/jobs';
+import HermesPanel from '../components/HermesPanel.vue';
 
 const $q = useQuasar();
 const store = useJobsStore();
@@ -84,12 +85,11 @@ onMounted(load);
         <div class="kv"><span class="text-2">Max parallel jobs</span><span class="mono">{{ config.concurrency.maxParallelJobs }}</span></div>
         <div class="kv"><span class="text-2">Coder command</span><span class="code-chip">{{ config.coder.command }}</span></div>
         <div class="kv"><span class="text-2">Bind</span><span class="mono">{{ config.dashboard.bind }}:{{ config.dashboard.port }}</span></div>
-        <div class="kv">
-          <span class="text-2">Hermes</span>
-          <span class="row items-center q-gutter-xs"><span class="dot" :class="config.hermes.enabled ? 'on' : 'off'" /> <span class="mono">{{ config.hermes.enabled ? 'connected' : 'disabled (M4)' }}</span></span>
-        </div>
         <div class="kv"><span class="text-2">Version</span><span class="mono">{{ config.version }}</span></div>
       </section>
+
+      <!-- Hermes: set up / start-stop / choose managed vs remote -->
+      <HermesPanel />
 
       <section class="panel q-pa-md">
         <div class="sec-title mono">NOTIFICATIONS</div>

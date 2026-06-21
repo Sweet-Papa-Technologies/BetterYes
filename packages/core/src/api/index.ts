@@ -6,9 +6,9 @@ import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
 import fstatic from '@fastify/static';
 import type { CreateJobRequest, PublicConfig, WsMessage } from '@foreman/shared';
-import { type ForemanConfig, expandPath } from '../config/index.js';
-import { requireSecret } from '../secrets/index.js';
-import { isGitRepo } from '../coder/worktree.js';
+import { type ForemanConfig, expandPath, loadConfig } from '../config/index.js';
+import { requireSecret, optionalSecret } from '../secrets/index.js';
+import { isGitRepo, mergeWorktree } from '../coder/worktree.js';
 import {
   appendEvent,
   createEscalation,
@@ -25,6 +25,21 @@ import { readRules, writeRules, writeRulesParsed } from '../rules/store.js';
 import { jobManager } from '../orchestrator/index.js';
 import { push } from '../push/index.js';
 import { HermesClient } from '../hermes/index.js';
+import {
+  hermesBin,
+  readMeta,
+  isRunning as hermesRunning,
+  reachable as hermesReachable,
+  setupHermes,
+  startHermes,
+  stopHermes,
+  selectManaged,
+  selectRemote,
+  disableHermes,
+  installHermesAsync,
+  installState,
+  HERMES_INSTALL_URL,
+} from '../hermes/setup.js';
 import { bus } from '../bus.js';
 import { createLogger } from '../logger.js';
 
@@ -68,7 +83,15 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
   await app.register(websocket);
 
   const token = requireSecret(config.dashboard.auth_token_env);
-  const hermes = new HermesClient(config);
+  // Rebuild the Hermes client from disk on each use so switching instance/remote from the
+  // dashboard takes effect immediately — no daemon restart (the chat panel is low-frequency).
+  const freshHermes = (): HermesClient => {
+    try {
+      return new HermesClient(loadConfig());
+    } catch {
+      return new HermesClient(config); // fall back to boot config if the file is mid-edit
+    }
+  };
 
   // ── Bearer auth (REST + WS). Loopback-only bind is set at listen() (NFR). ──
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -184,6 +207,37 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     if (!result.ok) return reply.code(409).send({ error: result.error });
     return getJob(id);
   });
+  // Merge the job's worktree branch into the repo's branch + (optionally) clean up (PRD U6).
+  app.post('/api/jobs/:id/merge', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const job = getJob(id);
+    if (!job) return reply.code(404).send({ error: 'not found' });
+    if (jobManager.isRunning(id)) {
+      return reply.code(409).send({ error: 'Job is still running — pause or kill it before merging.' });
+    }
+    if (!job.worktreePath) return reply.code(409).send({ error: 'This job has no worktree to merge.' });
+    const body = (req.body as { cleanup?: boolean; commitMessage?: string }) ?? {};
+    const result = mergeWorktree({
+      repoPath: job.repoPath,
+      wtPath: job.worktreePath,
+      branch: job.branch,
+      cleanup: body.cleanup ?? true,
+      ...(body.commitMessage ? { commitMessage: body.commitMessage } : {}),
+    });
+    if (!result.ok) return reply.code(409).send({ error: result.error, conflict: result.conflict });
+    const where = result.nothingToMerge ? 'already up to date' : `merged → ${result.baseBranch}`;
+    updateJob(id, {
+      lastActivity: `${result.cleanedUp ? 'Merged & cleaned up' : 'Merged'} (${where})`,
+      ...(result.cleanedUp ? { worktreePath: null } : {}),
+    });
+    appendEvent({
+      jobId: id,
+      type: 'log',
+      level: 'info',
+      message: `${result.nothingToMerge ? 'No new commits to merge' : `Merged ${job.branch} → ${result.baseBranch}`}${result.cleanedUp ? '; worktree removed' : ''}`,
+    });
+    return result;
+  });
 
   // ── Gate → core: live audit + escalation records (M2) ──────────────────────
   // Posted by the PreToolUse gate (fire-and-forget) for deny/escalate decisions.
@@ -263,6 +317,7 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
       Connection: 'keep-alive',
     });
     const sse = (obj: unknown) => reply.raw.write(`data: ${JSON.stringify(obj)}\n\n`);
+    const hermes = freshHermes();
     if (!hermes.enabled) {
       sse({ type: 'disabled' });
       reply.raw.end();
@@ -276,6 +331,95 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     }
     reply.raw.end();
     return reply;
+  });
+
+  // ── Hermes management (set up / start-stop / choose instance / remote) ──────
+  // Aggregate status: what's installed, the managed gateway's lifecycle, and which endpoint
+  // is currently active (managed vs remote vs off) plus a live health check.
+  app.get('/api/hermes', async () => {
+    const meta = readMeta();
+    const inst = installState();
+    const managedRunning = hermesRunning();
+    const managedReachable = meta ? await hermesReachable(meta.port) : false;
+    const cfg = (() => {
+      try {
+        return loadConfig().hermes;
+      } catch {
+        return config.hermes;
+      }
+    })();
+    const source: 'managed' | 'remote' | 'off' = !cfg.enabled
+      ? 'off'
+      : meta && cfg.base_url.replace(/\/$/, '') === meta.baseUrl.replace(/\/$/, '')
+        ? 'managed'
+        : 'remote';
+    const healthy = cfg.enabled ? await freshHermes().health() : false;
+    return {
+      installed: inst.installed,
+      installing: inst.installing,
+      installError: inst.error,
+      installUrl: HERMES_INSTALL_URL,
+      managed: meta
+        ? { setUp: true, running: managedRunning, reachable: managedReachable, baseUrl: meta.baseUrl, port: meta.port, model: meta.model }
+        : { setUp: false, running: false, reachable: false },
+      active: {
+        enabled: cfg.enabled,
+        source,
+        baseUrl: cfg.base_url,
+        apiKeyEnv: cfg.api_key_env,
+        hasKey: !!optionalSecret(cfg.api_key_env),
+        healthy,
+      },
+    };
+  });
+
+  // Provision the managed isolated instance (own home + port; never touches ~/.hermes).
+  app.post('/api/hermes/setup', async (req, reply) => {
+    if (!hermesBin()) {
+      return reply.code(409).send({ error: 'hermes_not_installed', installUrl: HERMES_INSTALL_URL });
+    }
+    const b = (req.body as { port?: number; model?: string; start?: boolean }) ?? {};
+    try {
+      const r = await setupHermes({
+        ...(b.port ? { port: b.port } : {}),
+        ...(b.model ? { model: b.model } : {}),
+        registerMcp: true,
+        enableInConfig: true,
+      });
+      if (b.start !== false) startHermes();
+      return r;
+    } catch (e) {
+      return reply.code(500).send({ error: (e as Error).message });
+    }
+  });
+
+  // Kick off the official installer in the background (curl | bash). Poll GET /api/hermes.
+  app.post('/api/hermes/install', async () => installHermesAsync());
+
+  app.post('/api/hermes/start', async () => {
+    try {
+      const { port, pid } = startHermes();
+      return { ok: true, port, pid };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  });
+  app.post('/api/hermes/stop', async () => ({ ok: stopHermes() }));
+
+  // Choose which Hermes the chat panel talks to (takes effect immediately).
+  app.post('/api/hermes/select', async (req, reply) => {
+    const b = (req.body as { source?: 'managed' | 'remote' | 'off'; baseUrl?: string; apiKey?: string }) ?? {};
+    if (b.source === 'managed') {
+      const r = selectManaged();
+      return r.ok ? r : reply.code(409).send(r);
+    }
+    if (b.source === 'remote') {
+      if (!b.baseUrl) return reply.code(400).send({ ok: false, error: 'baseUrl required' });
+      const r = selectRemote({ baseUrl: b.baseUrl, ...(b.apiKey ? { apiKey: b.apiKey } : {}) });
+      return r.ok ? r : reply.code(400).send(r);
+    }
+    if (b.source === 'off') return { ok: disableHermes() };
+    return reply.code(400).send({ ok: false, error: 'source must be managed | remote | off' });
   });
 
   // ── Web Push (M4) ──────────────────────────────────────────────────────────

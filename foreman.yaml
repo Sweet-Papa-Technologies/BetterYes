@@ -35,7 +35,7 @@ rules:
 
 hermes:
   enabled: false # M4 — the conversational brain behind the chat panel
-  base_url: "http://localhost:8765"
+  base_url: "http://localhost:8650"
   api_key_env: "HERMES_API_KEY"
 
 dashboard:

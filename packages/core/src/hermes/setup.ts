@@ -135,9 +135,11 @@ export async function setupHermes(opts: SetupOptions = {}): Promise<SetupResult>
   let mcpRegistered = false;
   if (opts.registerMcp) mcpRegistered = registerForemanMcp();
 
-  // 5. Optional: flip hermes on in foreman.yaml (comments preserved).
+  // 5. Optional: point foreman.yaml at this managed instance + flip it on (comments preserved).
   let configUpdated = false;
-  if (opts.enableInConfig) configUpdated = enableHermesInConfig(baseUrl);
+  if (opts.enableInConfig) {
+    configUpdated = setHermesConfig({ enabled: true, baseUrl, apiKeyEnv: 'HERMES_API_KEY' });
+  }
 
   const meta: HermesMeta = { home: HERMES_HOME, port, model, baseUrl };
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
@@ -172,15 +174,93 @@ export function registerForemanMcp(): boolean {
   return r.status === 0;
 }
 
-/** Enable hermes in the resolved foreman.yaml, preserving comments. */
-export function enableHermesInConfig(baseUrl: string): boolean {
+/** Patch the hermes block in the resolved foreman.yaml, preserving comments + formatting. */
+export function setHermesConfig(patch: {
+  enabled?: boolean;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+}): boolean {
   const configPath = findConfigPath();
   if (!configPath) return false;
   const doc = YAML.parseDocument(fs.readFileSync(configPath, 'utf8'));
-  doc.setIn(['hermes', 'enabled'], true);
-  doc.setIn(['hermes', 'base_url'], baseUrl);
+  if (patch.enabled !== undefined) doc.setIn(['hermes', 'enabled'], patch.enabled);
+  if (patch.baseUrl !== undefined) doc.setIn(['hermes', 'base_url'], patch.baseUrl);
+  if (patch.apiKeyEnv !== undefined) doc.setIn(['hermes', 'api_key_env'], patch.apiKeyEnv);
   fs.writeFileSync(configPath, doc.toString());
   return true;
+}
+
+/** Point the active Hermes at the managed isolated instance (must be set up first). */
+export function selectManaged(): { ok: boolean; error?: string; baseUrl?: string } {
+  const meta = readMeta();
+  if (!meta) return { ok: false, error: 'Managed Hermes is not set up yet — run setup first.' };
+  const ok = setHermesConfig({ enabled: true, baseUrl: meta.baseUrl, apiKeyEnv: 'HERMES_API_KEY' });
+  return ok ? { ok: true, baseUrl: meta.baseUrl } : { ok: false, error: 'could not write foreman.yaml' };
+}
+
+/** Point the active Hermes at a remote endpoint (advanced). Stores the key as HERMES_REMOTE_KEY. */
+export function selectRemote(opts: { baseUrl: string; apiKey?: string }): {
+  ok: boolean;
+  error?: string;
+  storedKeyTo?: 'keychain' | 'env';
+  note?: string;
+} {
+  const baseUrl = (opts.baseUrl ?? '').trim().replace(/\/$/, '');
+  if (!/^https?:\/\//.test(baseUrl)) return { ok: false, error: 'Base URL must start with http:// or https://' };
+  let storedKeyTo: 'keychain' | 'env' | undefined;
+  let note: string | undefined;
+  const key = opts.apiKey?.trim();
+  if (key) {
+    if (isKeychainAvailable()) {
+      setSecret('HERMES_REMOTE_KEY', key);
+      storedKeyTo = 'keychain';
+    } else {
+      storedKeyTo = 'env';
+      note = `Add to your .env: HERMES_REMOTE_KEY=${key}`;
+    }
+  }
+  const ok = setHermesConfig({ enabled: true, baseUrl, apiKeyEnv: 'HERMES_REMOTE_KEY' });
+  return ok
+    ? { ok: true, ...(storedKeyTo ? { storedKeyTo } : {}), ...(note ? { note } : {}) }
+    : { ok: false, error: 'could not write foreman.yaml' };
+}
+
+/** Turn the chat bridge off (foreman.yaml hermes.enabled = false). */
+export function disableHermes(): boolean {
+  return setHermesConfig({ enabled: false });
+}
+
+// ── async install (so the dashboard can kick it off without blocking) ──────────
+const INSTALL_LOG = path.join(HERMES_DIR, 'install.log');
+let installing = false;
+let lastInstallError: string | null = null;
+
+export function installState(): { installing: boolean; installed: boolean; error: string | null } {
+  return { installing, installed: !!hermesBin(), error: lastInstallError };
+}
+
+/** Run the official installer in the background (curl | bash). Returns immediately. */
+export function installHermesAsync(): { started: boolean; alreadyInstalled: boolean } {
+  if (hermesBin()) return { started: false, alreadyInstalled: true };
+  if (installing) return { started: true, alreadyInstalled: false };
+  fs.mkdirSync(HERMES_DIR, { recursive: true });
+  installing = true;
+  lastInstallError = null;
+  const out = fs.openSync(INSTALL_LOG, 'a');
+  const child = spawn('bash', ['-c', `curl -fsSL ${HERMES_INSTALL_URL} | bash`], {
+    detached: true,
+    stdio: ['ignore', out, out],
+  });
+  child.on('exit', (code) => {
+    installing = false;
+    if (code !== 0) lastInstallError = `installer exited with code ${code} (see ${INSTALL_LOG})`;
+  });
+  child.on('error', (e) => {
+    installing = false;
+    lastInstallError = e.message;
+  });
+  child.unref();
+  return { started: true, alreadyInstalled: false };
 }
 
 // ── lifecycle ────────────────────────────────────────────────────────────────

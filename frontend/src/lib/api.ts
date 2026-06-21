@@ -49,7 +49,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (res.status === 401) throw new ApiError('unauthorized', 401);
-  if (!res.ok) throw new ApiError(`${res.status} ${res.statusText}`, res.status);
+  if (!res.ok) {
+    // Surface the server's `{ error }` message when present, so toasts are actionable.
+    let serverMsg = '';
+    try {
+      serverMsg = ((await res.clone().json()) as { error?: string })?.error ?? '';
+    } catch {
+      /* non-JSON body */
+    }
+    throw new ApiError(serverMsg || `${res.status} ${res.statusText}`, res.status);
+  }
   return (await res.json()) as T;
 }
 
@@ -99,6 +108,34 @@ export async function chatStream(
   return result;
 }
 
+export interface MergeResult {
+  ok: boolean;
+  error?: string;
+  conflict?: boolean;
+  baseBranch?: string;
+  committed?: boolean;
+  cleanedUp?: boolean;
+  nothingToMerge?: boolean;
+}
+
+export interface HermesStatus {
+  installed: boolean;
+  installing: boolean;
+  installError: string | null;
+  installUrl: string;
+  managed:
+    | { setUp: true; running: boolean; reachable: boolean; baseUrl: string; port: number; model: string }
+    | { setUp: false; running: false; reachable: false };
+  active: {
+    enabled: boolean;
+    source: 'managed' | 'remote' | 'off';
+    baseUrl: string;
+    apiKeyEnv: string;
+    hasKey: boolean;
+    healthy: boolean;
+  };
+}
+
 export interface DirEntry {
   name: string;
   path: string;
@@ -128,6 +165,8 @@ export const api = {
   resume: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/resume`, { method: 'POST' }),
   kill: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/kill`, { method: 'POST' }),
   retry: (id: string) => req<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
+  merge: (id: string, cleanup = true) =>
+    req<MergeResult>(`/api/jobs/${id}/merge`, { method: 'POST', body: JSON.stringify({ cleanup }) }),
   escalations: (state?: string) =>
     req<Escalation[]>(`/api/escalations${state ? `?state=${state}` : ''}`),
   resolveEscalation: (id: string, decision: 'allow' | 'deny', answer?: string) =>
@@ -139,6 +178,19 @@ export const api = {
   subscribePush: (sub: PushSubscriptionJSON) =>
     req<{ ok: boolean }>('/api/push/subscribe', { method: 'POST', body: JSON.stringify(sub) }),
   testPush: () => req<{ ok: boolean }>('/api/push/test', { method: 'POST' }),
+  hermes: {
+    status: () => req<HermesStatus>('/api/hermes'),
+    setup: (body: { port?: number; model?: string; start?: boolean } = {}) =>
+      req<unknown>('/api/hermes/setup', { method: 'POST', body: JSON.stringify(body) }),
+    install: () => req<{ started: boolean; alreadyInstalled: boolean }>('/api/hermes/install', { method: 'POST' }),
+    start: () => req<{ ok: boolean; port?: number; error?: string }>('/api/hermes/start', { method: 'POST' }),
+    stop: () => req<{ ok: boolean }>('/api/hermes/stop', { method: 'POST' }),
+    select: (body: { source: 'managed' | 'remote' | 'off'; baseUrl?: string; apiKey?: string }) =>
+      req<{ ok: boolean; error?: string; note?: string }>('/api/hermes/select', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  },
   getRules: () => req<{ text: string; parsed: RulesFile; path: string }>('/api/rules'),
   putRules: (parsed: RulesFile) =>
     req<{ ok: boolean }>('/api/rules', { method: 'PUT', body: JSON.stringify({ parsed }) }),

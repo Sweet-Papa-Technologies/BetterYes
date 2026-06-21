@@ -2,9 +2,9 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send, RotateCcw } from 'lucide-vue-next';
+import { ArrowLeft, Pause, Play, Square, Check, GitBranch, Send, RotateCcw, GitMerge } from 'lucide-vue-next';
 import { useJobsStore } from '../../stores/jobs';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import StatusPill from '../../components/StatusPill.vue';
 import BurnMeter from '../../components/BurnMeter.vue';
 import LogConsole from '../../components/LogConsole.vue';
@@ -25,6 +25,9 @@ const paused = computed(() => job.value?.paused ?? false);
 const TERMINAL = ['done', 'failed', 'killed'];
 const isTerminal = computed(() => TERMINAL.includes(job.value?.state ?? ''));
 const retrying = ref(false);
+const merging = ref(false);
+// Mergeable once the job is finished and its worktree still exists (killed clears it).
+const canMerge = computed(() => isTerminal.value && !!job.value?.worktreePath);
 
 const planText = computed(() => {
   const p = [...events.value].reverse().find((e) => e.type === 'plan' || e.type === 'director');
@@ -73,6 +76,26 @@ async function retry() {
     retrying.value = false;
   }
 }
+function merge() {
+  $q.dialog({
+    title: 'Merge & clean up',
+    message: `Merge <b>${job.value?.branch}</b> into your repo's current branch, then remove the worktree? Any uncommitted work is committed first. Nothing changes if there's a conflict.`,
+    html: true,
+    cancel: true,
+    persistent: true,
+    ok: { label: 'Merge', color: 'amber', noCaps: true },
+  }).onOk(async () => {
+    merging.value = true;
+    try {
+      const r = await api.merge(id.value, true);
+      notify(r.nothingToMerge ? 'No new commits — worktree cleaned up' : `Merged into ${r.baseBranch} & cleaned up`);
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : 'Merge failed', 'negative');
+    } finally {
+      merging.value = false;
+    }
+  });
+}
 async function approvePlan() {
   await api.redirect(id.value, 'Plan approved — proceed.');
   notify('Plan approved');
@@ -103,7 +126,10 @@ function hhmmss(ts: string) {
         </div>
         <div class="row items-center q-gutter-xs controls">
           <template v-if="isTerminal">
-            <q-btn unelevated dense no-caps size="sm" class="ctrl-approve" :loading="retrying" @click="retry">
+            <q-btn v-if="canMerge" unelevated dense no-caps size="sm" class="ctrl-merge" :loading="merging" @click="merge">
+              <GitMerge :size="15" /> <span class="q-ml-xs">Merge</span>
+            </q-btn>
+            <q-btn flat dense no-caps size="sm" class="ctrl" :loading="retrying" @click="retry">
               <RotateCcw :size="15" /> <span class="q-ml-xs">Retry</span>
             </q-btn>
           </template>
@@ -181,6 +207,7 @@ function hhmmss(ts: string) {
 .controls .ctrl { border: 1px solid var(--fg-border); border-radius: 4px; color: var(--fg-text-2); }
 .ctrl-danger { color: var(--fg-failed) !important; }
 .ctrl-approve { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; }
+.ctrl-merge { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; }
 .burns { align-items: center; }
 .cost { font-size: 12px; align-self: flex-end; cursor: help; }
 .cost-tag { font-size: 9px; color: var(--fg-muted); border: 1px solid var(--fg-border); border-radius: 2px; padding: 0 3px; }
