@@ -3,7 +3,7 @@
  * and delivers Web Push notifications (M4).
  * Cache-first for same-origin static assets; always network for /api and /ws (live data).
  */
-const CACHE = 'foreman-shell-v1';
+const CACHE = 'foreman-shell-v2';
 const SHELL = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', (e) => {
@@ -56,24 +56,32 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  if (event.request.method !== 'GET') return;
-  // Never cache the API or websocket upgrades — always go to the network.
+  const req = event.request;
+  const url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== self.location.origin) return;
+  // Never touch the API or websocket upgrades — always live.
   if (url.pathname.startsWith('/api') || url.pathname.startsWith('/ws')) return;
-  // Same-origin static assets: cache-first, fall back to network and cache it.
-  if (url.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(event.request).then(
-        (hit) =>
-          hit ||
-          fetch(event.request)
-            .then((res) => {
-              const copy = res.clone();
-              caches.open(CACHE).then((c) => c.put(event.request, copy));
-              return res;
-            })
-            .catch(() => caches.match('./index.html')),
+
+  // NETWORK-FIRST. This is a localhost tool — the network (the daemon) is always there, so a
+  // fresh build is picked up immediately and we never serve a stale app shell or a stale
+  // code-split route chunk. The cache is only an offline fallback.
+  //
+  // Critically: a failed JS/CSS request is NEVER replaced with index.html. Returning HTML for
+  // a script request is what silently breaks Vue Router's lazy route chunks ("routes stop
+  // working after a rebuild") — index.html is only an acceptable fallback for a navigation.
+  event.respondWith(
+    fetch(req)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() =>
+        caches
+          .match(req)
+          .then((hit) => hit || (req.mode === 'navigate' ? caches.match('./index.html') : Response.error())),
       ),
-    );
-  }
+  );
 });
