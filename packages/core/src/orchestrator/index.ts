@@ -19,6 +19,7 @@ import {
 } from '../db/index.js';
 import type { Escalation } from '@foreman/shared';
 import { buildGateLaunch, buildMcpConfig } from '../gate/index.js';
+import { sessionAllow } from '../gate/sessionAllow.js';
 import { requireSecret } from '../secrets/index.js';
 import { jobDir } from '../paths.js';
 import path from 'node:path';
@@ -561,6 +562,7 @@ class JobManager {
     if (!job) return { ok: false, error: 'not found' };
     if (!TERMINAL_STATES.includes(job.state))
       return { ok: false, error: `can't retry a ${job.state} job` };
+    sessionAllow.clearJob(jobId); // a fresh run should re-confirm its holds
     const reset = updateJob(jobId, {
       state: 'created',
       sessionId: null,

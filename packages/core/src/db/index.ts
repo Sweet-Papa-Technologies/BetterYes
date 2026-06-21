@@ -92,6 +92,7 @@ function migrate(d: Database.Database): void {
   // Additive migrations for DBs created by earlier milestones (CREATE TABLE IF NOT EXISTS
   // won't add new columns to an existing table).
   addColumnIfMissing(d, 'escalations', 'decision', 'TEXT');
+  addColumnIfMissing(d, 'escalations', 'tool', 'TEXT');
   addColumnIfMissing(d, 'jobs', 'paused', 'INTEGER NOT NULL DEFAULT 0');
 }
 
@@ -329,6 +330,7 @@ export interface CreateEscalationParams {
   question: string;
   proposedAction?: string | null;
   reason?: string | null;
+  tool?: string | null;
 }
 
 /** Record an escalation raised by the rule gate; bumps the job's open-question count. */
@@ -338,9 +340,9 @@ export function createEscalation(p: CreateEscalationParams): Escalation {
   const n = (d.prepare('SELECT COUNT(*) AS n FROM escalations').get() as { n: number }).n;
   const id = `ESC-${1000 + n}`;
   d.prepare(
-    `INSERT INTO escalations (id, jobId, question, proposedAction, reason, state, createdAt)
-     VALUES (?, ?, ?, ?, ?, 'open', ?)`,
-  ).run(id, p.jobId, p.question, p.proposedAction ?? null, p.reason ?? null, ts);
+    `INSERT INTO escalations (id, jobId, question, proposedAction, reason, tool, state, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`,
+  ).run(id, p.jobId, p.question, p.proposedAction ?? null, p.reason ?? null, p.tool ?? null, ts);
   const job = getJob(p.jobId);
   if (job) updateJob(p.jobId, { openQuestions: job.openQuestions + 1 });
   return rowToEscalation({
@@ -349,6 +351,7 @@ export function createEscalation(p: CreateEscalationParams): Escalation {
     question: p.question,
     proposedAction: p.proposedAction ?? null,
     reason: p.reason ?? null,
+    tool: p.tool ?? null,
     state: 'open',
     decision: null,
     answer: null,
@@ -364,6 +367,7 @@ function rowToEscalation(r: Record<string, unknown>): Escalation {
     question: r.question as string,
     proposedAction: (r.proposedAction as string) ?? null,
     reason: (r.reason as string) ?? null,
+    tool: (r.tool as string) ?? null,
     state: r.state as Escalation['state'],
     decision: (r.decision as Escalation['decision']) ?? null,
     answer: (r.answer as string) ?? null,

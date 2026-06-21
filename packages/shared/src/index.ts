@@ -128,6 +128,8 @@ export interface Escalation {
   question: string;
   proposedAction: string | null;
   reason: string | null;
+  /** The tool the gate held (e.g. Bash/Write), when this came from the rule gate. */
+  tool: string | null;
   state: 'open' | 'resolved' | 'timed_out';
   /** Operator's verdict once answered. */
   decision: 'allow' | 'deny' | null;
@@ -141,6 +143,8 @@ export interface Escalation {
 export interface ResolveEscalationRequest {
   decision: 'allow' | 'deny';
   answer?: string;
+  /** Allow: also auto-allow matching gate holds (same job + tool + rule) for this session. */
+  remember?: boolean;
 }
 
 // ── Config surfaced to the dashboard (`GET /config`) ─────────────────────────

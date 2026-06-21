@@ -15,6 +15,10 @@ const store = useJobsStore();
 const open = ref(true);
 const answer = ref('');
 const busy = ref(false);
+// "Always allow for this session" only makes sense for a gate hold (it has a tool + rule);
+// plan-approval / blocked escalations carry no tool, so the toggle is hidden for those.
+const remember = ref(false);
+const canRemember = computed(() => !!props.escalation.tool);
 
 const job = computed(() => store.job(props.escalation.jobId));
 // The real per-profile hold window comes from the daemon (falls back to 30 min).
@@ -41,7 +45,8 @@ const remaining = computed(() => {
 async function resolve(decision: 'allow' | 'deny') {
   busy.value = true;
   try {
-    await store.resolveEscalation(props.escalation.id, decision, answer.value.trim() || undefined);
+    const remb = decision === 'allow' && remember.value && canRemember.value;
+    await store.resolveEscalation(props.escalation.id, decision, answer.value.trim() || undefined, remb);
     open.value = false;
   } catch {
     $q.notify({ message: 'Could not resolve — try again', color: 'negative', position: 'top' });
@@ -98,6 +103,13 @@ function sendAnswer() {
         </q-input>
       </div>
 
+      <div v-if="canRemember" class="remember q-mt-md">
+        <q-toggle v-model="remember" dense color="amber" size="sm">
+          <span class="rmb-lbl">Always allow <span class="mono">{{ escalation.tool }}</span> like this for this session</span>
+        </q-toggle>
+        <div class="text-muted rmb-hint">Stops the gate re-asking for matching actions until the daemon restarts. Applies to this job only.</div>
+      </div>
+
       <div class="row q-gutter-sm q-mt-md actions">
         <q-btn unelevated no-caps class="allow col" :loading="busy" @click="resolve('allow')">
           <Check :size="18" class="q-mr-xs" /> Allow
@@ -132,4 +144,7 @@ function sendAnswer() {
 .allow { background: var(--fg-accent); color: #0e0f11; font-weight: 600; border-radius: 4px; padding: 10px; }
 .deny { color: var(--fg-text-2); border-color: var(--fg-border); border-radius: 4px; padding: 10px; }
 .actions { flex-wrap: nowrap; }
+.remember { border-top: 1px solid var(--fg-border); padding-top: 12px; }
+.rmb-lbl { font-size: 13px; color: var(--fg-text-2); }
+.rmb-hint { font-size: 11px; margin-top: 4px; }
 </style>

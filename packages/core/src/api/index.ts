@@ -23,6 +23,7 @@ import {
 } from '../db/index.js';
 import { readRules, writeRules, writeRulesParsed } from '../rules/store.js';
 import { jobManager } from '../orchestrator/index.js';
+import { sessionAllow } from '../gate/sessionAllow.js';
 import { push } from '../push/index.js';
 import { HermesClient } from '../hermes/index.js';
 import {
@@ -260,12 +261,25 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     const id = (req.params as { id: string }).id;
     const job = getJob(id);
     if (!job) return reply.code(404).send({ error: 'not found' });
-    const b = req.body as { question?: string; proposedAction?: string; reason?: string };
+    const b = req.body as { question?: string; proposedAction?: string; reason?: string; tool?: string };
+    // "Always allow for this session": if the operator previously blessed this (job, tool,
+    // rule), auto-allow without raising a new hold — the gate sees autoAllowed and proceeds.
+    if (b.tool && b.reason && sessionAllow.has(id, b.tool, b.reason)) {
+      appendEvent({
+        jobId: id,
+        type: 'tool',
+        level: 'info',
+        message: `Auto-allowed (session rule): ${b.tool} ${b.proposedAction ?? ''} (${b.reason})`,
+        data: { tool: b.tool, action: 'auto-allow', rule: b.reason, target: b.proposedAction },
+      });
+      return reply.code(200).send({ autoAllowed: true, decision: 'allow' });
+    }
     const esc = createEscalation({
       jobId: id,
       question: b.question ?? 'Approve this action?',
       proposedAction: b.proposedAction ?? null,
       reason: b.reason ?? null,
+      tool: b.tool ?? null,
     });
     // The gate is holding the tool call — reflect the hold on the board.
     if (job.state === 'running') updateJob(id, { state: 'blocked', lastActivity: 'Holding for your decision' });
@@ -293,18 +307,24 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
   // Operator answers an escalation from the dashboard (PRD FR4 / U4).
   app.post('/api/escalations/:id/resolve', async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    const body = (req.body as { decision?: 'allow' | 'deny'; answer?: string }) ?? {};
+    const body = (req.body as { decision?: 'allow' | 'deny'; answer?: string; remember?: boolean }) ?? {};
     const esc = getEscalation(id);
     if (!esc) return reply.code(404).send({ error: 'not found' });
     if (esc.state !== 'open') return reply.code(409).send({ error: `already ${esc.state}` });
     const decision = body.decision === 'deny' ? 'deny' : 'allow';
     const resolved = resolveEscalation(id, decision, body.answer);
+    // Remember this for the session so the gate stops re-asking (allow + a gate-tool hold only).
+    let remembered = false;
+    if (body.remember && decision === 'allow' && esc.tool && esc.reason) {
+      sessionAllow.add(esc.jobId, esc.tool, esc.reason);
+      remembered = true;
+    }
     appendEvent({
       jobId: esc.jobId,
       type: 'escalation',
       level: 'info',
-      message: `Resolved: ${decision}${body.answer ? ` — "${body.answer}"` : ''}`,
-      data: { id, decision },
+      message: `Resolved: ${decision}${body.answer ? ` — "${body.answer}"` : ''}${remembered ? ' (always allow this session)' : ''}`,
+      data: { id, decision, remembered },
     });
     return resolved;
   });

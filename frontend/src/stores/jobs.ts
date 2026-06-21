@@ -97,8 +97,8 @@ export const useJobsStore = defineStore('jobs', {
       }
     },
 
-    async resolveEscalation(id: string, decision: 'allow' | 'deny', answer?: string) {
-      await api.resolveEscalation(id, decision, answer);
+    async resolveEscalation(id: string, decision: 'allow' | 'deny', answer?: string, remember?: boolean) {
+      await api.resolveEscalation(id, decision, answer, remember);
       this.escalations = this.escalations.filter((e) => e.id !== id);
     },
 

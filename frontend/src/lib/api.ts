@@ -169,10 +169,10 @@ export const api = {
     req<MergeResult>(`/api/jobs/${id}/merge`, { method: 'POST', body: JSON.stringify({ cleanup }) }),
   escalations: (state?: string) =>
     req<Escalation[]>(`/api/escalations${state ? `?state=${state}` : ''}`),
-  resolveEscalation: (id: string, decision: 'allow' | 'deny', answer?: string) =>
+  resolveEscalation: (id: string, decision: 'allow' | 'deny', answer?: string, remember?: boolean) =>
     req<Escalation>(`/api/escalations/${id}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ decision, ...(answer ? { answer } : {}) }),
+      body: JSON.stringify({ decision, ...(answer ? { answer } : {}), ...(remember ? { remember } : {}) }),
     }),
   vapidKey: () => req<{ publicKey: string }>('/api/push/vapid'),
   subscribePush: (sub: PushSubscriptionJSON) =>

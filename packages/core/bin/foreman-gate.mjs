@@ -209,7 +209,11 @@ async function holdForHuman(body) {
       body: JSON.stringify(body),
     });
     if (!res.ok) return { decision: 'deny', reason: 'could not raise escalation' };
-    escId = (await res.json()).id;
+    const created = await res.json();
+    // "Always allow for this session": core recognised this (job, tool, rule) and pre-approved
+    // it, so don't hold — proceed immediately.
+    if (created.autoAllowed) return { decision: 'allow', reason: 'session-allow' };
+    escId = created.id;
   } catch {
     return { decision: 'deny', reason: 'core unreachable' };
   }
@@ -304,6 +308,7 @@ async function emit(action, ruleLabel, tool, input, jobId) {
     question: `Approve ${tool}: ${target}?`,
     proposedAction: target,
     reason: ruleLabel,
+    tool,
   });
   writeAudit({ ...audit, action: `escalate-${verdict.decision}`, reason: verdict.reason });
   if (verdict.decision === 'allow') {
