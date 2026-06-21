@@ -1,5 +1,6 @@
 #!/usr/bin/env -S npx tsx
 import { spawnSync } from 'node:child_process';
+import * as qrcode from 'qrcode-terminal';
 import { Command } from 'commander';
 import type { JobEvent } from '@foreman/shared';
 import { TERMINAL_STATES } from '@foreman/shared';
@@ -69,6 +70,79 @@ program
     }
 
     await startServer(config);
+  });
+
+// ── tunnel (remote access from your phone, via Tailscale) ──────────────────────
+program
+  .command('tunnel')
+  .description('Reach the dashboard from your phone over HTTPS via Tailscale (private mesh). See docs/REMOTE_ACCESS.md.')
+  .option('--off', 'stop serving and exit')
+  .option('--funnel', 'expose PUBLICLY to the internet — DANGEROUS for an RCE panel (see docs)')
+  .option('--yes-expose-publicly', 'required acknowledgement to use --funnel')
+  .action((opts: { off?: boolean; funnel?: boolean; yesExposePublicly?: boolean }) => {
+    if (spawnSync('tailscale', ['version'], { encoding: 'utf8' }).status !== 0) {
+      console.error(
+        'Tailscale is not installed.\n' +
+          '  1) Install it:  https://tailscale.com/download   (free for personal use)\n' +
+          '  2) Sign in:     tailscale up\n' +
+          '  3) Re-run:      foreman tunnel\n' +
+          'Full guide + why public access is off by default: docs/REMOTE_ACCESS.md',
+      );
+      process.exit(1);
+    }
+    const mode = opts.funnel ? 'funnel' : 'serve';
+    if (opts.off) {
+      spawnSync('tailscale', ['serve', 'reset'], { stdio: 'inherit' });
+      console.log('Tunnel stopped (tailscale serve reset).');
+      return;
+    }
+    // Must be connected to a tailnet.
+    let dns = '';
+    let state = '';
+    try {
+      const st = JSON.parse(spawnSync('tailscale', ['status', '--json'], { encoding: 'utf8' }).stdout);
+      state = st.BackendState;
+      dns = String(st.Self?.DNSName ?? '').replace(/\.$/, '');
+    } catch {
+      /* ignore */
+    }
+    if (state !== 'Running' || !dns) {
+      console.error('Tailscale is installed but not connected. Run `tailscale up`, sign in, then retry.');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const port = config.dashboard.port;
+    if (opts.funnel && !opts.yesExposePublicly) {
+      console.error(
+        '\n⚠  --funnel exposes FOREMAN to the PUBLIC internet.\n' +
+          '   FOREMAN runs coding agents that execute shell commands — a leaked token means remote\n' +
+          '   code execution on this machine. The bearer token alone is NOT enough for public exposure.\n' +
+          '   Strongly prefer plain `foreman tunnel` (private tailnet only).\n' +
+          '   If you truly need a public URL, put an auth layer in front (see docs/REMOTE_ACCESS.md)\n' +
+          '   and re-run with --yes-expose-publicly.',
+      );
+      process.exit(1);
+    }
+    const run = spawnSync('tailscale', [mode, '--bg', String(port)], { encoding: 'utf8' });
+    if (run.status !== 0) {
+      console.error(`tailscale ${mode} failed: ${(run.stderr || run.stdout || '').trim()}`);
+      console.error('Tip: enable HTTPS certs for your tailnet (admin console → DNS → HTTPS Certificates).');
+      process.exit(1);
+    }
+    const url = `https://${dns}`;
+    const token = optionalSecret(config.dashboard.auth_token_env);
+    console.log(`\n✓ FOREMAN is reachable at:  ${url}`);
+    console.log(`  Mode: ${opts.funnel ? 'PUBLIC (Funnel) — anyone with the URL + token' : 'private tailnet (Serve) — your devices only'}`);
+    console.log('  Tip: set dashboard.trust_proxy: true (or FOREMAN_TRUST_PROXY=true) so it logs correctly behind the proxy.\n');
+    if (!opts.funnel && token) {
+      // Private mesh + TLS → embedding the token in a QR is safe and one-scan convenient.
+      console.log('  Scan on your phone (must be on your tailnet) to open + sign in automatically:\n');
+      qrcode.generate(`${url}/?token=${encodeURIComponent(token)}`, { small: true });
+      console.log(`\n  Or open ${url} and paste this token in Settings:\n    ${token}`);
+    } else {
+      console.log(`  Open ${url} and paste your token in Settings (foreman secret get FOREMAN_TOKEN --raw).`);
+    }
+    console.log('\n  Stop with:  foreman tunnel --off');
   });
 
 // ── init ──────────────────────────────────────────────────────────────────────

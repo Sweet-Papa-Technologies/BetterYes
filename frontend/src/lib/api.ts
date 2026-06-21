@@ -31,6 +31,23 @@ const API_BASE = import.meta.env.DEV
 
 const TOKEN_KEY = 'foreman_token';
 
+// One-time token handoff via URL (?token=…) — used by `foreman tunnel`'s QR code so scanning
+// it on your phone logs you straight in. Store it, then scrub it from the address bar so the
+// token isn't left sitting in history. Runs once when this module is first imported.
+(function captureTokenFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const t = url.searchParams.get('token');
+    if (t) {
+      localStorage.setItem(TOKEN_KEY, t.trim());
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    }
+  } catch {
+    /* SSR / no window */
+  }
+})();
+
 export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? import.meta.env.VITE_FOREMAN_TOKEN ?? '';
 }

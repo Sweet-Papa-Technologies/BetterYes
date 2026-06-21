@@ -202,6 +202,7 @@ foreman init [--gemini-key <k>|--project <id>]  provision key + secrets + litell
 foreman doctor                           preflight: claude, LiteLLM, secrets, models, gate, DB
 foreman smoke [--no-full]                prove the gate fires + a trivial job runs
 foreman serve [--with-hermes]            run the daemon + dashboard (optionally co-start Hermes)
+foreman tunnel [--off]                   reach the dashboard from your phone over HTTPS (Tailscale)
 foreman job run|list                     launch / inspect jobs from the terminal
 foreman hermes setup|start|stop|status   isolated Hermes Agent for the chat panel
 foreman secret set|get|list|delete       Keychain / .env secret management
@@ -209,7 +210,7 @@ foreman secret set|get|list|delete       Keychain / .env secret management
 
 ## Security
 
-- Dashboard requires a bearer token and binds to loopback by default — for phone access bind to a Tailscale/LAN IP; never public.
+- Dashboard requires a bearer token and binds to loopback by default. For **phone access from anywhere**, run `foreman tunnel` — it serves the UI over real HTTPS on your private [Tailscale](https://tailscale.com) mesh (scan the QR to sign in), never the public internet. Public exposure is deliberately opt-in and gated — see [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) for why (it's an RCE panel) and how to do it safely if you must.
 - Rule-gate fail-safe: on any error it escalates/denies per profile — **no path defaults to allow**. Protected-path checks resolve symlinks.
 - Secrets are never logged; the logger and audit redact secret-pattern values. Each job is isolated in its own git worktree.
 

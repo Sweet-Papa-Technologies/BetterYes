@@ -70,7 +70,7 @@ function dashboardDist(): string | null {
 }
 
 export async function buildServer(config: ForemanConfig): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, trustProxy: config.dashboard.trust_proxy });
   // Tolerate empty bodies on JSON POSTs. The control routes (pause/resume/kill) carry no
   // body but the dashboard's fetch sets `Content-Type: application/json`; Fastify's default
   // parser rejects that with a 400 before the handler runs. Treat empty as `{}`.

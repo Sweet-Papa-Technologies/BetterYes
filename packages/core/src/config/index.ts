@@ -59,6 +59,9 @@ const ConfigSchema = z.object({
     bind: z.string().default('127.0.0.1'),
     port: z.number().int().positive().default(7777),
     auth_token_env: z.string().default('FOREMAN_TOKEN'),
+    // Trust X-Forwarded-* headers — enable only when behind a trusted reverse proxy
+    // (Tailscale Serve / Caddy / Cloudflare). Stays loopback-bound; the proxy terminates TLS.
+    trust_proxy: z.boolean().default(false),
   }),
 });
 
@@ -105,6 +108,7 @@ function applyEnvOverrides(c: ForemanConfig): ForemanConfig {
   if (process.env.FOREMAN_ENDPOINT_URL) c.endpoint.base_url = process.env.FOREMAN_ENDPOINT_URL;
   if (process.env.FOREMAN_BIND) c.dashboard.bind = process.env.FOREMAN_BIND;
   if (process.env.FOREMAN_PORT) c.dashboard.port = Number(process.env.FOREMAN_PORT);
+  if (process.env.FOREMAN_TRUST_PROXY) c.dashboard.trust_proxy = process.env.FOREMAN_TRUST_PROXY === 'true';
   return c;
 }
 
