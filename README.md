@@ -57,43 +57,69 @@ swappable models, a real human-in-the-loop, and clean one-command setup.
 |---|---|
 | ![Rules](docs/screenshots/rules.png) | <img src="docs/screenshots/escalation-mobile.png" width="280" /> |
 
-## Quickstart (~10 min)
+## Quickstart (~15 min)
 
-**Prereqs:** Node ≥ 22, `pnpm`, [Claude Code](https://claude.com/claude-code) on PATH, and a
-LiteLLM proxy + Gemini key (`foreman init` provisions both via `gcloud`). macOS for Keychain;
-everyone else uses `.env`.
+**You need four things** (two are accounts, both have free paths):
+
+| | What | Get it |
+|---|---|---|
+| 1 | **Node ≥ 22 + `pnpm`** | [nodejs.org](https://nodejs.org) · `corepack enable` gives you pnpm |
+| 2 | **Claude Code**, logged in | [claude.com/claude-code](https://claude.com/claude-code), then run `claude` once (uses your Claude subscription) |
+| 3 | **A Gemini API key** (Director/Router) | **Easiest:** a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — no GCP project or billing. *Or* let `foreman init` mint one via `gcloud`. |
+| 4 | **Python 3.9+ + LiteLLM** | `pip install 'litellm[proxy]'` — the proxy FOREMAN routes Gemini through |
+
+Secrets live in your **macOS Keychain**; on **Linux/Windows** they're written to a `.env` for you.
 
 ```bash
 pnpm install
 
-# 1) Provision: mints a Gemini key in your GCP project, stores secrets (Keychain or .env),
-#    generates VAPID push keys, and writes litellm.config.yaml. Offers to set up Hermes.
-pnpm foreman init --project <your-gcp-project>
+# 1) Install the model proxy (one-time)
+pip install 'litellm[proxy]'
 
-# 2) Start the LiteLLM proxy
-export GEMINI_API_KEY="$(security find-generic-password -s foreman -a GEMINI_API_KEY -w)"
-export LITELLM_KEY="$(security find-generic-password -s foreman -a LITELLM_KEY -w)"
+# 2) Provision: stores secrets (Keychain or .env), generates push keys, writes litellm.config.yaml.
+#    Beginner path — paste a free key from https://aistudio.google.com/apikey :
+pnpm foreman init --gemini-key <YOUR_GEMINI_KEY>
+#    …or mint one via gcloud instead:
+#    pnpm foreman init --project <your-gcp-project>
+
+# 3) Start the LiteLLM proxy (needs GEMINI_API_KEY + LITELLM_KEY in its env)
+export GEMINI_API_KEY=$(pnpm -s foreman secret get GEMINI_API_KEY --raw)  # macOS Keychain
+export LITELLM_KEY=$(pnpm -s foreman secret get LITELLM_KEY --raw)        # (Linux/Windows: source .env)
 litellm --config litellm.config.yaml --port 4000 &
 
-# 3) Sanity checks
-pnpm foreman doctor    # secrets, models, claude, gate, DB
+# 4) Preflight — tells you exactly what's missing, with fixes
+pnpm foreman doctor
 pnpm foreman smoke     # proves the rule gate fires + a trivial job runs end-to-end
 
-# 4) Build the dashboard + run the daemon (serves the dashboard)
+# 5) Build the dashboard + run the daemon (serves the dashboard)
 pnpm build
 pnpm foreman serve     # http://127.0.0.1:7777   (add --with-hermes to co-start Hermes)
 ```
 
-Open the dashboard, paste your token in **Settings** (`security find-generic-password -s
-foreman -a FOREMAN_TOKEN -w`), and launch a job. Or do it from your terminal:
+> **Two terminals:** the LiteLLM proxy (step 3) and `foreman serve` (step 5) each run in the
+> foreground — keep the proxy running in its own terminal/tab. Stuck? `foreman doctor` pinpoints it.
+
+Open the dashboard, paste your token in **Settings** (`pnpm -s foreman secret get FOREMAN_TOKEN --raw`),
+and launch a job. Or from your terminal:
 
 ```bash
 pnpm foreman job run --repo /path/to/a/git/repo \
   --brief "Create a file named hello.txt containing a friendly greeting."
 ```
 
-**Docker:** `docker compose up --build` brings up the daemon + a LiteLLM proxy (see
-[docs](docs/DESIGN.md) and `docker-compose.yml`).
+### Platform notes
+
+- **macOS** — the happy path above; secrets in Keychain, `foreman secret get` reads them back.
+- **Linux** — identical, except `foreman init` writes secrets to `.env` (chmod 600). Load them
+  before starting LiteLLM: `set -a && source .env && set +a`.
+- **Windows** — use **WSL2** and follow the Linux path (recommended). Native PowerShell mostly
+  works for the Node parts, but isn't yet tested end-to-end — `foreman init` prints a PowerShell
+  snippet to load `.env`. The Coder runs on your Claude subscription, so the **Docker** path below
+  is often the smoothest non-mac option.
+
+**Docker (recommended for non-mac):** populate `.env` (run `foreman init` once, or copy
+`.env.example`), set `coder.auth: api_key` in `foreman.yaml` with an `ANTHROPIC_API_KEY`, then
+`docker compose up --build` brings up the daemon + LiteLLM together. See `docker-compose.yml`.
 
 ## Steering a job
 
@@ -169,8 +195,8 @@ product spec: [`docs/PRD.md`](docs/PRD.md) · UI design: [`docs/STITCH_BRIEF.md`
 ## CLI
 
 ```
-foreman init [--project <id>]            provision Gemini key + secrets + litellm.config.yaml
-foreman doctor                           health-check secrets, models, claude, gate, DB
+foreman init [--gemini-key <k>|--project <id>]  provision key + secrets + litellm.config.yaml
+foreman doctor                           preflight: claude, LiteLLM, secrets, models, gate, DB
 foreman smoke [--no-full]                prove the gate fires + a trivial job runs
 foreman serve [--with-hermes]            run the daemon + dashboard (optionally co-start Hermes)
 foreman job run|list                     launch / inspect jobs from the terminal

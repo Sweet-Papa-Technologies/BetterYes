@@ -13,7 +13,7 @@ import {
 } from '../src/secrets/index.js';
 import { startServer } from '../src/api/index.js';
 import { runMcpServer } from '../src/mcp-server/index.js';
-import { hasGcloud, resolveGcpProject, runInit } from '../src/provision/index.js';
+import { hasGcloud, runInit } from '../src/provision/index.js';
 import { gateInstalled } from '../src/gate/index.js';
 import { runSmoke } from '../src/smoke/index.js';
 import {
@@ -76,11 +76,25 @@ program
   .command('init')
   .description('Provision the Gemini key, store secrets, and write litellm.config.yaml.')
   .option('--project <id>', 'GCP project to mint the Gemini key in (default: gcloud active project)')
-  .action(async (opts: { project?: string }) => {
-    const project = resolveGcpProject(opts.project);
-    console.log(`Provisioning FOREMAN in GCP project: ${project}\n`);
-    const r = await runInit({ project });
+  .option('--gemini-key <key>', 'use a Gemini API key directly (https://aistudio.google.com/apikey) — skips gcloud')
+  .action(async (opts: { project?: string; geminiKey?: string }) => {
+    let geminiKey = opts.geminiKey;
+    // No key + no gcloud → offer the free, no-billing AI Studio path interactively.
+    if (!geminiKey && !opts.project && !hasGcloud()) {
+      console.log('gcloud not found — no problem. You can paste a free Gemini API key instead.');
+      console.log('Get one (no GCP project or billing needed): https://aistudio.google.com/apikey\n');
+      geminiKey = (await prompt('Paste your Gemini API key (or Ctrl-C to cancel): ')).trim();
+      if (!geminiKey) {
+        console.error('No key provided. Re-run with --gemini-key <KEY> or install gcloud.');
+        process.exit(1);
+      }
+    }
+    console.log(
+      geminiKey ? '\nProvisioning FOREMAN with the provided Gemini key…\n' : '\nProvisioning FOREMAN via gcloud…\n',
+    );
+    const r = await runInit({ ...(geminiKey ? { geminiKey } : {}), ...(opts.project ? { project: opts.project } : {}) });
     console.log(`✓ Gemini API key ${r.geminiKeySource} (stored to ${r.storedTo})`);
+    if (r.envPath) console.log(`✓ Secrets written to ${r.envPath} (chmod 600 — not printed)`);
     console.log(`✓ Director model: ${r.directorModel}`);
     console.log(`✓ Router model:   ${r.routerModel}`);
     console.log(`✓ Wrote ${r.litellmConfigPath}`);
@@ -97,47 +111,84 @@ program
     }
 
     console.log('\nNext:');
-    console.log('  1) export GEMINI_API_KEY (or source .env), then start the proxy:');
-    console.log('       litellm --config litellm.config.yaml');
-    console.log('  2) foreman doctor   # verify everything is reachable');
-    console.log('  3) foreman serve    # start the daemon + dashboard');
+    console.log("  1) Install the LiteLLM proxy if you haven't:  pip install 'litellm[proxy]'");
+    if (r.storedTo === 'keychain') {
+      console.log('  2) Load secrets + start the proxy:');
+      console.log('       export GEMINI_API_KEY=$(pnpm -s foreman secret get GEMINI_API_KEY --raw)');
+      console.log('       export LITELLM_KEY=$(pnpm -s foreman secret get LITELLM_KEY --raw)');
+      console.log('       litellm --config litellm.config.yaml --port 4000');
+    } else {
+      console.log('  2) Load .env + start the proxy:');
+      console.log('       bash/zsh:    set -a && source .env && set +a');
+      console.log('       PowerShell:  Get-Content .env | %% { $kv=$_ -split "=",2; if($kv[0]){[Environment]::SetEnvironmentVariable($kv[0],$kv[1])} }');
+      console.log('       litellm --config litellm.config.yaml --port 4000');
+    }
+    console.log('  3) foreman doctor   # verify everything is reachable');
+    console.log('  4) foreman serve    # start the daemon + dashboard');
   });
 
 // ── doctor ──────────────────────────────────────────────────────────────────--
 program
   .command('doctor')
-  .description('Check that secrets, models, the claude CLI, and the DB are all healthy.')
+  .description('Preflight: check every prerequisite (claude, LiteLLM, secrets, models, DB) with fixes.')
   .action(async () => {
     let ok = true;
     const config = loadConfig();
-    const check = (label: string, pass: boolean, detail = '') => {
-      console.log(`${pass ? '✓' : '✗'} ${label}${detail ? `  — ${detail}` : ''}`);
-      if (!pass) ok = false;
+    // `soft` checks inform but don't fail the run; `fix` prints a copy-paste remedy on failure.
+    const check = (label: string, pass: boolean, opts: { detail?: string; fix?: string; soft?: boolean } = {}) => {
+      console.log(`${pass ? '✓' : opts.soft ? '·' : '✗'} ${label}${opts.detail ? `  — ${opts.detail}` : ''}`);
+      if (!pass) {
+        if (opts.fix) console.log(`    ↳ ${opts.fix}`);
+        if (!opts.soft) ok = false;
+      }
     };
 
-    check('gcloud on PATH', hasGcloud());
+    // 1. Claude Code (the Coder) — required.
     const claudeV = spawnSync(config.coder.command, ['--version'], { encoding: 'utf8' });
-    check('claude CLI', claudeV.status === 0, claudeV.stdout?.trim().split('\n')[0] ?? '');
-    check('rule gate', !config.rules.enabled || gateInstalled(), config.rules.enabled ? 'enabled' : 'disabled');
+    check('claude CLI installed', claudeV.status === 0, {
+      detail: claudeV.stdout?.trim().split('\n')[0] ?? '',
+      fix: 'install Claude Code (https://claude.com/claude-code), then run `claude` once to log in',
+    });
+
+    // 2. LiteLLM proxy package — the #1 missed prerequisite.
+    const litellmV = spawnSync('litellm', ['--version'], { encoding: 'utf8' });
+    check('LiteLLM installed', litellmV.status === 0, {
+      detail: (litellmV.stdout || litellmV.stderr || '').trim().split('\n')[0],
+      fix: "pip install 'litellm[proxy]'   (needs Python 3.9+)",
+    });
+
+    // 3. gcloud — only needed if you provision via GCP (the AI Studio key path skips it).
+    check('gcloud on PATH', hasGcloud(), {
+      soft: true,
+      detail: hasGcloud() ? '' : 'optional — or use `foreman init --gemini-key <KEY>`',
+    });
+
+    check('rule gate', !config.rules.enabled || gateInstalled(), { detail: config.rules.enabled ? 'enabled' : 'disabled' });
 
     for (const name of [config.dashboard.auth_token_env, config.endpoint.api_key_env, 'GEMINI_API_KEY']) {
       const r = resolveSecret(name);
-      check(`secret ${name}`, !!r, r ? `from ${r.source}` : 'missing');
+      check(`secret ${name}`, !!r, {
+        detail: r ? `from ${r.source}` : 'missing',
+        fix: `run \`foreman init\` (or set ${name} in .env / Keychain)`,
+      });
     }
 
     try {
       ensureSchema();
       check('SQLite writable', true);
     } catch (e) {
-      check('SQLite writable', false, (e as Error).message);
+      check('SQLite writable', false, { detail: (e as Error).message });
     }
 
     try {
       const models = new ModelClient(config);
       const reachable = await models.ping(config.models.router);
-      check('LiteLLM endpoint', reachable, reachable ? config.endpoint.base_url : 'no response (is litellm running?)');
+      check('LiteLLM endpoint', reachable, {
+        detail: reachable ? config.endpoint.base_url : 'no response',
+        fix: 'start it:  litellm --config litellm.config.yaml --port 4000   (with GEMINI_API_KEY + LITELLM_KEY in env)',
+      });
     } catch (e) {
-      check('LiteLLM endpoint', false, (e as Error).message);
+      check('LiteLLM endpoint', false, { detail: (e as Error).message, fix: 'start the LiteLLM proxy (see `foreman init` output)' });
     }
 
     console.log(ok ? '\nAll checks passed.' : '\nSome checks failed — see above.');
@@ -181,14 +232,16 @@ secret
   });
 secret
   .command('get <name>')
-  .description('Print where a secret resolves from (value is masked).')
-  .action((name: string) => {
+  .description('Show where a secret resolves from (masked); --raw prints just the value.')
+  .option('--raw', 'print only the value (for `export FOO=$(foreman secret get FOO --raw)`)')
+  .action((name: string, opts: { raw?: boolean }) => {
     const r = resolveSecret(name);
     if (!r) {
       console.error(`${name}: not found`);
       process.exit(1);
     }
-    console.log(`${name}: set (source: ${r.source}, ${r.value.length} chars)`);
+    if (opts.raw) process.stdout.write(r.value); // value only, no newline — safe to pipe
+    else console.log(`${name}: set (source: ${r.source}, ${r.value.length} chars)`);
   });
 secret
   .command('list')

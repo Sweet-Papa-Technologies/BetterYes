@@ -65,7 +65,7 @@ onMounted(load);
           <q-input v-model="token" dense borderless type="password" class="fld col mono" placeholder="paste FOREMAN_TOKEN" />
           <q-btn unelevated no-caps class="save" @click="saveToken">Save</q-btn>
         </div>
-        <div class="text-muted hint q-mt-xs">Stored in this browser only. From the daemon: <span class="mono">foreman secret get FOREMAN_TOKEN</span></div>
+        <div class="text-muted hint q-mt-xs">Stored in this browser only. From the daemon: <span class="mono">pnpm -s foreman secret get FOREMAN_TOKEN --raw</span></div>
       </section>
 
       <div v-if="error" class="needs-you-band q-pa-sm">{{ error }}</div>

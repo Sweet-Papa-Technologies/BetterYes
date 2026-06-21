@@ -130,32 +130,69 @@ export function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString('base64url');
 }
 
+/** Merge keys into the repo-root .env (create if missing, update in place), 0600. */
+function upsertEnv(repoRoot: string, vars: Record<string, string>): string {
+  const envPath = path.join(repoRoot, '.env');
+  const lines = fs.existsSync(envPath)
+    ? fs.readFileSync(envPath, 'utf8').replace(/\n+$/, '').split('\n')
+    : [];
+  for (const [k, v] of Object.entries(vars)) {
+    const line = `${k}=${v}`;
+    const idx = lines.findIndex((l) => l.startsWith(`${k}=`));
+    if (idx >= 0) lines[idx] = line;
+    else lines.push(line);
+  }
+  fs.writeFileSync(envPath, lines.join('\n') + '\n', { mode: 0o600 });
+  return envPath;
+}
+
 export interface InitResult {
-  geminiKeySource: 'provisioned' | 'existing';
+  geminiKeySource: 'provisioned' | 'existing' | 'provided';
   directorModel: string;
   routerModel: string;
   litellmConfigPath: string;
   storedTo: 'keychain' | 'env';
+  /** Where secrets were written when not using the Keychain. */
+  envPath?: string;
+  keyReachable: boolean;
   notes: string[];
 }
 
-export async function runInit(opts: { project: string }): Promise<InitResult> {
+/**
+ * Provision FOREMAN. Two paths:
+ *   • `geminiKey` given → use it directly (e.g. a free key from Google AI Studio); no gcloud.
+ *   • otherwise → mint a restricted key in the GCP project via gcloud.
+ * Either way: generate the dashboard/proxy/VAPID secrets, store them (Keychain on macOS, else
+ * written straight into .env — never echoed), and write litellm.config.yaml.
+ */
+export async function runInit(opts: { project?: string; geminiKey?: string }): Promise<InitResult> {
   const notes: string[] = [];
   const repoRoot = path.dirname(findConfigPath() ?? path.join(process.cwd(), 'foreman.yaml'));
 
-  if (!hasGcloud()) {
-    throw new Error('gcloud CLI not found on PATH. Install the Google Cloud SDK first.');
+  // 1. Gemini key — direct (AI Studio) or minted via gcloud.
+  let geminiKey: string;
+  let geminiKeySource: InitResult['geminiKeySource'];
+  if (opts.geminiKey?.trim()) {
+    geminiKey = opts.geminiKey.trim();
+    geminiKeySource = 'provided';
+  } else {
+    if (!hasGcloud()) {
+      throw new Error(
+        'gcloud CLI not found on PATH. Either install the Google Cloud SDK, or skip it entirely ' +
+          'with a free key:\n  foreman init --gemini-key <KEY>   (get one at https://aistudio.google.com/apikey)',
+      );
+    }
+    const project = resolveGcpProject(opts.project);
+    const alreadyHadKey = !!resolveSecret('GEMINI_API_KEY');
+    enableServices(project);
+    geminiKey = provisionGeminiKey(project);
+    geminiKeySource = alreadyHadKey ? 'existing' : 'provisioned';
   }
 
-  // 1. Gemini key (reuse if present)
-  const alreadyHadKey = !!resolveSecret('GEMINI_API_KEY');
-  enableServices(opts.project);
-  const geminiKey = provisionGeminiKey(opts.project);
-
-  // 2. Secrets → keychain (or guide to .env)
+  // 2. Secrets → Keychain (macOS) or straight into .env (everyone else).
   const storedTo: 'keychain' | 'env' = isKeychainAvailable() ? 'keychain' : 'env';
-  // Web Push VAPID keypair (M4) — generated once, reused on re-run.
-  const vapid = webpush.generateVAPIDKeys();
+  const vapid = webpush.generateVAPIDKeys(); // Web Push keypair (M4) — generated once, reused.
+  let envPath: string | undefined;
   if (storedTo === 'keychain') {
     setSecret('GEMINI_API_KEY', geminiKey);
     if (!resolveSecret('LITELLM_KEY')) setSecret('LITELLM_KEY', randomToken());
@@ -165,34 +202,46 @@ export async function runInit(opts: { project: string }): Promise<InitResult> {
       setSecret('VAPID_PRIVATE_KEY', vapid.privateKey);
     }
   } else {
-    notes.push(
-      'Non-macOS: add these to your .env — ' +
-        `GEMINI_API_KEY=${geminiKey}  LITELLM_KEY=${randomToken()}  FOREMAN_TOKEN=${randomToken()}  ` +
-        `VAPID_PUBLIC_KEY=${vapid.publicKey}  VAPID_PRIVATE_KEY=${vapid.privateKey}`,
-    );
+    // Write directly to .env so nothing sensitive is printed to the terminal/scrollback.
+    envPath = upsertEnv(repoRoot, {
+      GEMINI_API_KEY: geminiKey,
+      LITELLM_KEY: resolveSecret('LITELLM_KEY')?.value ?? randomToken(),
+      FOREMAN_TOKEN: resolveSecret('FOREMAN_TOKEN')?.value ?? randomToken(),
+      VAPID_PUBLIC_KEY: resolveSecret('VAPID_PUBLIC_KEY')?.value ?? vapid.publicKey,
+      VAPID_PRIVATE_KEY: resolveSecret('VAPID_PRIVATE_KEY')?.value ?? vapid.privateKey,
+    });
   }
 
-  // 3. Verify model ids, fall back to the *-latest aliases if a name doesn't resolve.
+  // 3. Verify model ids against the live API, falling back to the *-latest aliases.
   let director = DIRECTOR_MODEL;
   let router = ROUTER_MODEL;
-  if (!(await verifyGeminiModel(geminiKey, director))) {
+  const dOk = await verifyGeminiModel(geminiKey, director);
+  if (!dOk) {
     notes.push(`Model "${director}" did not resolve; falling back to gemini-flash-latest.`);
     director = 'gemini-flash-latest';
   }
-  if (!(await verifyGeminiModel(geminiKey, router))) {
+  const rOk = await verifyGeminiModel(geminiKey, router);
+  if (!rOk) {
     notes.push(`Model "${router}" did not resolve; falling back to gemini-flash-lite-latest.`);
     router = 'gemini-flash-lite-latest';
+  }
+  // If the key can't reach Gemini at all, the fallbacks won't help — flag it loudly.
+  const keyReachable = dOk || rOk || (await verifyGeminiModel(geminiKey, 'gemini-flash-latest'));
+  if (!keyReachable) {
+    notes.push('⚠ Could not reach Gemini with this key — double-check it (and that the API is enabled).');
   }
 
   // 4. LiteLLM config
   const litellmConfigPath = writeLiteLLMConfig({ director, router, repoRoot });
 
   return {
-    geminiKeySource: alreadyHadKey ? 'existing' : 'provisioned',
+    geminiKeySource,
     directorModel: director,
     routerModel: router,
     litellmConfigPath,
     storedTo,
+    ...(envPath ? { envPath } : {}),
+    keyReachable,
     notes,
   };
 }
