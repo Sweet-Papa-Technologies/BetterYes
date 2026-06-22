@@ -249,6 +249,16 @@ export async function buildServer(config: ForemanConfig): Promise<FastifyInstanc
     if (!result.ok) return reply.code(409).send({ error: result.error });
     return getJob(id);
   });
+  // Reopen a finished job with a follow-up instruction (continues its session/worktree).
+  app.post('/api/jobs/:id/followup', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!getJob(id)) return reply.code(404).send({ error: 'not found' });
+    const { message } = (req.body as { message?: string }) ?? {};
+    if (!message?.trim()) return reply.code(400).send({ error: 'message required' });
+    const result = jobManager.followUp(id, message);
+    if (!result.ok) return reply.code(409).send({ error: result.error });
+    return getJob(id);
+  });
   // Merge the job's worktree branch into the repo's branch + (optionally) clean up (PRD U6).
   app.post('/api/jobs/:id/merge', async (req, reply) => {
     const id = (req.params as { id: string }).id;

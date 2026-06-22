@@ -87,7 +87,7 @@ export class JobRunner {
     appendEvent({ jobId: this.job.id, type: 'log', level, message });
   }
 
-  async run(opts: { resume?: boolean } = {}): Promise<void> {
+  async run(opts: { resume?: boolean; followUp?: string } = {}): Promise<void> {
     try {
       // ── Prepare worktree (idempotent — reuses an existing one on resume) ────
       const wt = prepareWorktree({
@@ -96,6 +96,17 @@ export class JobRunner {
         branch: this.job.branch,
       });
       this.job = updateJob(this.job.id, { worktreePath: wt.path });
+
+      // ── Follow-up: a finished job is being reopened with a new instruction ──
+      // Continue the existing Claude session (sessionId) in the same worktree — the prior work
+      // is already there — and feed the operator's message as the next thing to do.
+      if (opts.followUp) {
+        this.logLine('info', 'Operator asked for follow-up — reopening the job');
+        this.setState('running', 'Follow-up requested');
+        return this.loop(
+          `This job previously finished. The operator reviewed the result and asked for follow-up work:\n\n${opts.followUp}\n\nContinue in the current directory — the prior work is already here. Don't redo finished work unless asked; if the request is already satisfied, reply DONE and stop.`,
+        );
+      }
 
       // ── Resume path: a session already exists → skip planning, continue it ──
       if (opts.resume && this.job.sessionId) {
@@ -431,6 +442,7 @@ export class JobRunner {
 interface QueueItem {
   job: Job;
   resume: boolean;
+  followUp?: string;
 }
 
 class JobManager {
@@ -449,9 +461,9 @@ class JobManager {
   }
 
   /** Enqueue a job; it starts immediately if a slot is free, else waits its turn. */
-  start(job: Job, opts: { resume?: boolean } = {}): void {
+  start(job: Job, opts: { resume?: boolean; followUp?: string } = {}): void {
     if (this.controllers.has(job.id) || this.queue.some((q) => q.job.id === job.id)) return;
-    this.queue.push({ job, resume: opts.resume ?? false });
+    this.queue.push({ job, resume: opts.resume ?? false, ...(opts.followUp ? { followUp: opts.followUp } : {}) });
     this.pump();
   }
 
@@ -492,12 +504,12 @@ class JobManager {
   }
 
   private launch(item: QueueItem): void {
-    const { job, resume } = item;
+    const { job, resume, followUp } = item;
     const controller = new JobController();
     this.controllers.set(job.id, controller);
     const runner = new JobRunner(job, this.config, this.models, controller);
     runner
-      .run({ resume })
+      .run({ resume, ...(followUp ? { followUp } : {}) })
       .catch((e) => log.error(`runner crashed for ${job.id}: ${(e as Error).message}`))
       .finally(() => {
         this.controllers.delete(job.id);
@@ -577,6 +589,26 @@ class JobManager {
     appendEvent({ jobId, type: 'state', message: 'created', data: { state: 'created', retry: true } });
     appendEvent({ jobId, type: 'log', level: 'info', message: 'Re-launched by operator (retry)' });
     this.start(reset, { resume: false });
+    return { ok: true };
+  }
+
+  /**
+   * Reopen a finished job with a new instruction (follow-up). Unlike retry, this KEEPS the
+   * Claude session, worktree, and ledger and continues from where it left off — so you can ask
+   * for more work or revisions on a done/failed/killed job by just chatting with it.
+   */
+  followUp(jobId: string, message: string): { ok: true } | { ok: false; error: string } {
+    const msg = message.trim();
+    if (!msg) return { ok: false, error: 'message required' };
+    if (this.controllers.has(jobId)) return { ok: false, error: 'job is still running — just send it a redirect' };
+    if (this.queue.some((q) => q.job.id === jobId)) return { ok: false, error: 'job is already queued' };
+    const job = getJob(jobId);
+    if (!job) return { ok: false, error: 'not found' };
+    if (!TERMINAL_STATES.includes(job.state)) return { ok: false, error: `can't follow up on a ${job.state} job — it's still active` };
+    const reset = updateJob(jobId, { state: 'created', paused: false, lastActivity: 'Follow-up requested' });
+    appendEvent({ jobId, type: 'state', message: 'created', data: { state: 'created', followUp: true } });
+    appendEvent({ jobId, type: 'log', level: 'info', message: `Follow-up from operator: ${msg.slice(0, 200)}` });
+    this.start(reset, { followUp: msg });
     return { ok: true };
   }
 

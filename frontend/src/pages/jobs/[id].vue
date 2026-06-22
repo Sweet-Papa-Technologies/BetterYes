@@ -71,8 +71,18 @@ async function doRedirect() {
   const msg = redirectText.value.trim();
   if (!msg) return;
   redirectText.value = '';
-  await api.redirect(id.value, msg).catch(() => notify('Redirect failed', 'negative'));
-  notify('Redirect sent — applies at the next turn boundary');
+  // Finished job → reopen it as a follow-up (continues its session). Running → live redirect.
+  if (isTerminal.value) {
+    try {
+      await api.followUp(id.value, msg);
+      notify('Reopening the job with your follow-up…');
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : 'Follow-up failed', 'negative');
+    }
+  } else {
+    await api.redirect(id.value, msg).catch(() => notify('Redirect failed', 'negative'));
+    notify('Redirect sent — applies at the next turn boundary');
+  }
 }
 async function pauseResume() {
   // The WS job update flips `job.paused`; the button follows it.
@@ -217,11 +227,10 @@ function hhmmss(ts: string) {
         v-model="redirectText"
         dense borderless
         class="col composer-input mono"
-        :disable="isTerminal"
-        :placeholder="isTerminal ? 'Job finished — Retry to run it again' : 'Tell this job to…'"
+        :placeholder="isTerminal ? 'Ask for follow-up work — reopens the job…' : 'Tell this job to…'"
         @keyup.enter="doRedirect"
       />
-      <q-btn flat round dense class="send" :disable="isTerminal" @click="doRedirect"><Send :size="18" /></q-btn>
+      <q-btn flat round dense class="send" @click="doRedirect"><Send :size="18" /></q-btn>
     </div>
   </q-page>
 

@@ -238,6 +238,8 @@ export const api = {
   resume: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/resume`, { method: 'POST' }),
   kill: (id: string) => req<{ ok: boolean }>(`/api/jobs/${id}/kill`, { method: 'POST' }),
   retry: (id: string) => req<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
+  followUp: (id: string, message: string) =>
+    req<Job>(`/api/jobs/${id}/followup`, { method: 'POST', body: JSON.stringify({ message }) }),
   merge: (id: string, cleanup = true) =>
     req<MergeResult>(`/api/jobs/${id}/merge`, { method: 'POST', body: JSON.stringify({ cleanup }) }),
   escalations: (state?: string) =>
